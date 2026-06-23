@@ -109,6 +109,7 @@ body {
 #wrap {
   position:relative; width:360px; height:800px;
   overflow:hidden; border:2px solid #555;
+  box-sizing:border-box;
 }
 canvas { position:absolute; top:0; left:0; width:360px; height:800px; }
 
@@ -2816,7 +2817,7 @@ function updateHero(h, dt){
       diaochans.sort((a, b) => (b.lv - a.lv) || (a.id - b.id));
       const idx = diaochans.indexOf(h);
       const n = Math.max(1, diaochans.length);
-      const r = 40;
+      const r = 60;
       // 0 号位 = 车头 = -π/2，其余按 idx 顺时针均分
       const ang = -Math.PI / 2 + (2 * Math.PI / n) * idx;
       const targetX = G.fortress.worldX + Math.cos(ang) * r;

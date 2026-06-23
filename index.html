@@ -1451,8 +1451,8 @@ const HERO_DEFS = {
   guojia: {
     cls:'mage', name:'郭嘉', faction:'wei', title:'鬼才再世',
     passiveName:'积伤引爆',
-    passive:'自动主动维持场上同时存在 1/2/3/4 个"奇谋"标记（CD 4/3.5/3/2.5s）；标记目标 2s 后引爆 60px AOE，伤害=期间承受伤害总和×80/90/100/120%',
-    truePassive:'同时维持5标记、CD 2s、倒计时1.5s、引爆系数150%；中途死亡立即引爆当前积累伤害'
+    passive:'自动主动维持场上同时存在 1/2/3/4 个"奇谋"标记（CD 4/3.5/3/2.5s）；标记目标 2s 后引爆 60px AOE，伤害=期间承受伤害总和×80/90/100/120%；标记中途死亡立即引爆。引爆保底=郭嘉DPS×1.5×系数（防止未受击的奇谋空爆）',
+    truePassive:'同时维持5标记、CD 2s、倒计时1.5s、引爆系数150%、半径80px+减速；标记中途死亡引爆+50%；标记期间形成"黑洞"——80px范围敌人被持续减速并缓慢吸附向标记中心'
   },
 
   // ---------- SUPPORT ----------
@@ -1533,7 +1533,7 @@ const HERO_TAGS = {
 const AFFIX_RECO_TAGS = {
   '密林屏障': { tags:['ranged','support'] },
   '近身鏖战': { tags:['melee','support'] },
-  '贫瘠之地': { tags:['aoe'], excludeGather:true },
+  '贪婪深渊': { tags:['aoe','buff'], excludeGather:true },
   '风驰雷动': { tags:['slow','stun'] }
 };
 
@@ -1541,7 +1541,7 @@ function getRecommendedHeroIds(cfg){
   if(!cfg) return [];
   const rule = AFFIX_RECO_TAGS[cfg.affixName];
   const out = new Set();
-  // 默认采集英雄全员推荐（除贫瘠之地）
+  // 默认采集英雄全员推荐（除贪婪深渊：矿脉-50% 让采集吃力）
   if(!rule || !rule.excludeGather){
     for(const id in HERO_TAGS){
       if(HERO_TAGS[id].includes('gather')) out.add(id);
@@ -1550,6 +1550,7 @@ function getRecommendedHeroIds(cfg){
   if(rule && rule.tags && rule.tags.length){
     for(const id in HERO_TAGS){
       const tags = HERO_TAGS[id];
+      if(rule.excludeGather && tags.includes('gather')) continue;
       if(rule.tags.some(t => tags.includes(t))) out.add(id);
     }
   }
@@ -3127,6 +3128,10 @@ function dealDamage(target, amount, ownerCls, isCrit, damageType){
       G.dpsStats[ownerCls] = (G.dpsStats[ownerCls] || 0) + trueDmg;
     }
   }
+  // 郭嘉死亡触发引爆（无论是否真·郭嘉）：避免提前死亡浪费奇谋
+  if(target.hp <= 0 && target.guojiaMark){
+    triggerGuojiaExplode(target, { onDeath: true });
+  }
 }
 
 // 真伤入口：绕过 dmgType 词缀加成、直接扣血（鲁肃军粮 / 未来真伤源用此）
@@ -3141,6 +3146,9 @@ function dealTrueDamage(target, amount, ownerCls){
   }
   // 真伤跳字白色
   spawnDmgPopup(target.pos.x, target.pos.y, Math.round(amount), false);
+  if(target.hp <= 0 && target.guojiaMark){
+    triggerGuojiaExplode(target, { onDeath: true });
+  }
 }
 
 // 跳字效果
@@ -3638,6 +3646,32 @@ function updateHeroPassives(dt){
     if(m.guojiaMark){
       if(G.time >= m.guojiaMark.explodeAt){
         triggerGuojiaExplode(m);
+      } else if(m.guojiaMark.isTrue){
+        // 真·郭嘉的奇谋形成"黑洞"：周围 80px 敌人被减速 + 缓慢吸附向标记中心
+        const PULL_R = 80;
+        const PULL_SPEED = 30; // px/s
+        for(const m2 of G.monsters){
+          if(m2 === m || m2.hp <= 0) continue;
+          const ddx = m.pos.x - m2.pos.x, ddy = m.pos.y - m2.pos.y;
+          const dd = Math.hypot(ddx, ddy);
+          if(dd > PULL_R || dd < 8) continue;
+          // 持续轻减速
+          applySlow(m2, 0.2, 0.3);
+          // 缓慢吸附（与堡垒推进相比是轻量力，不会强扯过来但聚拢）
+          m2.pos.x += (ddx / dd) * PULL_SPEED * dt;
+          m2.pos.y += (ddy / dd) * PULL_SPEED * dt;
+        }
+        // 视觉：标记中心紫色脉冲粒子
+        if(Math.random() < 0.35){
+          G.particles = G.particles || [];
+          const a = Math.random() * Math.PI * 2;
+          const rr = PULL_R * (0.6 + Math.random() * 0.4);
+          G.particles.push({
+            x: m.pos.x + Math.cos(a) * rr, y: m.pos.y + Math.sin(a) * rr,
+            vx: -Math.cos(a) * 30, vy: -Math.sin(a) * 30,
+            life: 0.5, maxLife: 0.5, color: '#a070ff', size: 2
+          });
+        }
       }
     }
   }
@@ -3688,13 +3722,25 @@ function updateHeroPassives(dt){
     }
   }
 }
-function triggerGuojiaExplode(target){
+function triggerGuojiaExplode(target, opts){
   if(!target.guojiaMark) return;
+  const onDeath = !!(opts && opts.onDeath);
   const accum = target.guojiaMark.accumDmg || 0;
   const factor = target.guojiaMark.factor || 1;
   const isTrue = target.guojiaMark.isTrue;
+  const ownerId = target.guojiaMark.ownerHeroId;
   const boomR = isTrue ? 80 : 60;
-  const boomDmg = accum * factor;
+  // 引爆主伤害 = 累伤 × 系数；中途死亡时真·郭嘉 +50%
+  let boomDmg = accum * factor;
+  if(onDeath && isTrue) boomDmg *= 1.5;
+  // 保底伤害：取场上对应郭嘉的 DPS × 1.5s（折算约一个攻击周期的输出量）
+  // —— 防止"敌人未受击却被引爆"导致 0 输出，浪费奇谋
+  const owner = (G.heroes || []).find(h => h.id === ownerId);
+  if(owner){
+    let baseLine = heroDPS(owner) * 1.5 * factor;
+    if(onDeath && isTrue) baseLine *= 1.5;
+    if(boomDmg < baseLine) boomDmg = baseLine;
+  }
   target.guojiaMark = null;
   for(const m of G.monsters){
     if(m.hp <= 0) continue;

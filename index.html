@@ -2094,7 +2094,7 @@ function upgradeCost(n){
 // ============================================================
 function makeFortress(){
   return {
-    worldX: 180,
+    worldX: 185,
     worldY: FORTRESS_START_Y,
     hp: 100, maxHp: 100, r: 28
   };
@@ -2817,7 +2817,7 @@ function updateHero(h, dt){
       diaochans.sort((a, b) => (b.lv - a.lv) || (a.id - b.id));
       const idx = diaochans.indexOf(h);
       const n = Math.max(1, diaochans.length);
-      const r = 60;
+      const r = 75;
       // 0 号位 = 车头 = -π/2，其余按 idx 顺时针均分
       const ang = -Math.PI / 2 + (2 * Math.PI / n) * idx;
       const targetX = G.fortress.worldX + Math.cos(ang) * r;

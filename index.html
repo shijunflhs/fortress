@@ -2817,11 +2817,14 @@ function updateHero(h, dt){
       diaochans.sort((a, b) => (b.lv - a.lv) || (a.id - b.id));
       const idx = diaochans.indexOf(h);
       const n = Math.max(1, diaochans.length);
-      const r = 75;
+      const r = 60;
+      // 堡垒视觉重心在 worldY 上方 ~14px（绘制上 38px+塔楼 16px / 下 26px 不对称）
+      // 貂蝉环绕中心需要往上补偿，否则车头和车尾到堡的视距差异巨大
+      const centerY = G.fortress.worldY - 14;
       // 0 号位 = 车头 = -π/2，其余按 idx 顺时针均分
       const ang = -Math.PI / 2 + (2 * Math.PI / n) * idx;
       const targetX = G.fortress.worldX + Math.cos(ang) * r;
-      const targetY = G.fortress.worldY + Math.sin(ang) * r;
+      const targetY = centerY + Math.sin(ang) * r;
       const dx = targetX - h.worldX, dy = targetY - h.worldY;
       const d = Math.hypot(dx, dy);
       if(d > 4){

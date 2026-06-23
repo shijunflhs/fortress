@@ -1095,7 +1095,7 @@ canvas { position:absolute; top:0; left:0; width:360px; height:800px; }
 </style>
 </head>
 <body>
-<div id="stage">
+<div id="stage" oncontextmenu="return false;">
 <div id="wrap">
   <canvas id="c" width="360" height="800"></canvas>
 
@@ -2667,17 +2667,37 @@ function supportAttack(h){
 
 function pickIdleTarget(h){
   const fx = G.fortress.worldX, fy = G.fortress.worldY;
-  // Skew toward fortress front (up, where monsters come from)
-  // Use ang in [-π, 0] for upper hemisphere mostly
+  // 近战在"即将来袭"窗口内 → 在堡周围"箭头朝向那一侧"的扇形里随机游荡（不必精确靠箭头）
+  const isMelee = (h.cls === 'warrior' || h.cls === 'assassin');
+  if(isMelee){
+    const info = getNextWaveInfo && getNextWaveInfo();
+    if(info){
+      const remain = info.t - G.time;
+      const warnLead = info.frenzy ? 16 : (info.boss ? 12 : (info.pressure >= 1.25 ? 10 : 7));
+      if(remain > 0 && remain <= warnLead){
+        const groups = getWaveWarningGroups(info);
+        if(groups && groups.length > 0){
+          const g = groups.slice().sort((a, b) =>
+            Math.hypot(a.x - fx, a.y - fy) - Math.hypot(b.x - fx, b.y - fy)
+          )[0];
+          const baseAng = Math.atan2(g.y - fy, g.x - fx);
+          // ±60° 扇形（120° 张角），距堡 30-90px：保证在那一侧但不必精确
+          const ang = baseAng + (Math.random() - 0.5) * (Math.PI * 2 / 3);
+          const r = 30 + Math.random() * 60;
+          h.idleTarget = v2(fx + Math.cos(ang) * r, fy + Math.sin(ang) * r);
+          return;
+        }
+      }
+    }
+  }
+  // 默认：偏向堡前方半圆（怪物来向）的环堡游荡
   let ang;
   if(Math.random() < 0.8){
-    // 80% chance: front semicircle (angles π to 2π in canvas coords = upper half)
     ang = Math.PI + Math.random() * Math.PI;
   } else {
-    // 20% chance: anywhere
     ang = Math.random() * Math.PI * 2;
   }
-  const r = 30 + Math.random() * 60; // 30-90px from fortress
+  const r = 30 + Math.random() * 60;
   h.idleTarget = v2(fx + Math.cos(ang) * r, fy + Math.sin(ang) * r);
 }
 
@@ -2900,11 +2920,30 @@ function updateHero(h, dt){
         }
         const d = vdist(heroPos(h), h.target.pos);
         const dAim = vdist(heroPos(h), aimPos);
-        if(h.heroId === 'xuchu' && dAim > 4){
-          // 走向拦截点（不是怪物本身）
+        // 许褚拦截位移：仅当怪在攻击范围外时才往 aimPos 跑；
+        // 在范围内仍未到 aimPos → 慢漂（50% 速）补位但允许同时攻击 — 防止多许褚扎堆互推卡在拦截门槛外打不出
+        if(h.heroId === 'xuchu' && d > range){
           const dir = vnorm(vsub(aimPos, heroPos(h)));
           h.worldX += dir.x * moveSpeed * dt;
           h.worldY += dir.y * moveSpeed * dt;
+        } else if(h.heroId === 'xuchu'){
+          if(dAim > 4){
+            const dir = vnorm(vsub(aimPos, heroPos(h)));
+            h.worldX += dir.x * moveSpeed * 0.5 * dt;
+            h.worldY += dir.y * moveSpeed * 0.5 * dt;
+          }
+          if(h.atkCD <= 0){
+            performAttack(h, targets, maxT);
+            let cd = h.atkCDDuration;
+            cd /= (1 + (G.buffs.warriorSpd || 0));
+            if(h.lusuHaoLingUntil && h.lusuHaoLingUntil > G.time) cd /= 1.3;
+            if(h.xunyuCrownUntil && h.xunyuCrownUntil > G.time){
+              const srcLv = h.xunyuCrownLv || 1;
+              const spdBonus = h.xunyuCrownTrue ? 0.6 : [0.25, 0.30, 0.40, 0.50][Math.min(srcLv, 4) - 1];
+              cd /= (1 + spdBonus);
+            }
+            h.atkCD = cd;
+          }
         } else if(d > range){
           const dir = vnorm(vsub(h.target.pos, heroPos(h)));
           h.worldX += dir.x * moveSpeed * dt;
@@ -2979,6 +3018,26 @@ function updateHero(h, dt){
     } else {
       if(!h.idleTarget || vdist(heroPos(h), h.idleTarget) < 8){
         pickIdleTarget(h);
+      } else if(h.cls === 'warrior' || h.cls === 'assassin'){
+        // 近战：箭头预警激活时若当前游荡点不在"箭头那一侧"（与箭头方向夹角 > 90°）则立即重选
+        const info = getNextWaveInfo && getNextWaveInfo();
+        if(info){
+          const remain = info.t - G.time;
+          const warnLead = info.frenzy ? 16 : (info.boss ? 12 : (info.pressure >= 1.25 ? 10 : 7));
+          if(remain > 0 && remain <= warnLead){
+            const groups = getWaveWarningGroups(info);
+            if(groups && groups.length > 0){
+              const fx = G.fortress.worldX, fy = G.fortress.worldY;
+              const g = groups.slice().sort((a, b) =>
+                Math.hypot(a.x - fx, a.y - fy) - Math.hypot(b.x - fx, b.y - fy)
+              )[0];
+              const ax = g.x - fx, ay = g.y - fy;
+              const tx = h.idleTarget.x - fx, ty = h.idleTarget.y - fy;
+              const dot = ax * tx + ay * ty;
+              if(dot < 0) pickIdleTarget(h); // 夹角 > 90° → 不在那一侧
+            }
+          }
+        }
       }
       const dir = vnorm(vsub(h.idleTarget, heroPos(h)));
       h.worldX += dir.x * moveSpeed * dt;
@@ -3140,30 +3199,28 @@ function drawPopups(ctx){
 }
 
 // 许褚：复合评分索敌（先 80px 内候选；选距堡最近，且击退冷却中的目标降权）
-//   - 候选过滤：距许褚 ≤ XUCHU_SWITCH_RADIUS，且不在击退冷却中
-//   - 评分：0.6·距堡(归一) + 0.4·距许褚(归一)，分越低越优
+//   - 候选过滤：距许褚 ≤ XUCHU_SWITCH_RADIUS
+//   - 评分：0.6·距堡(归一) + 0.4·距许褚(归一) + 击退冷却中加 1.5 罚分（让其落到队尾，但不彻底排除）
 //   - 兜底：候选为空 → 取距许褚最近的1个（防止扑空）
-//   - 锁定：若 h.xuchuStuckUntil > now，强制保持上次目标（最小停留期保护）
 const XUCHU_SWITCH_RADIUS = 80;
 const XUCHU_KNOCK_CD = 0.8;
-const XUCHU_MIN_DWELL = 0.4;
 function pickXuchuTargets(h){
   const all = G.monsters.filter(m => m.hp > 0);
   if(all.length === 0) return [];
-  // 最小停留：仍锁旧目标
   const now = G.time;
-  if(h.target && h.target.hp > 0 && h.xuchuStuckUntil && now < h.xuchuStuckUntil){
-    return [h.target, ...all.filter(m => m !== h.target)];
-  }
   const isTrue = h.lv >= 5;
   const knockCd = isTrue ? (XUCHU_KNOCK_CD * 0.5) : XUCHU_KNOCK_CD;
   const fx = G.fortress ? G.fortress.worldX : 0;
   const fy = G.fortress ? G.fortress.worldY : 0;
   const hx = h.worldX, hy = h.worldY;
-  const inRadius = all.filter(m =>
-    vdist(m.pos, v2(hx, hy)) <= XUCHU_SWITCH_RADIUS &&
-    !(m.xuchuKnockedUntil && now < m.xuchuKnockedUntil - (XUCHU_KNOCK_CD - knockCd))
-  );
+  // 收集场上其他许褚已经锁定的 target，避免多个许褚扎堆挤同一只
+  const otherXuchuTargets = new Set();
+  for(const x of (G.heroes || [])){
+    if(x === h) continue;
+    if(x.heroId !== 'xuchu') continue;
+    if(x.target && x.target.hp > 0) otherXuchuTargets.add(x.target);
+  }
+  const inRadius = all.filter(m => vdist(m.pos, v2(hx, hy)) <= XUCHU_SWITCH_RADIUS);
   const pool = inRadius.length > 0 ? inRadius : [all.slice().sort((a, b) =>
     vdist(a.pos, v2(hx, hy)) - vdist(b.pos, v2(hx, hy))
   )[0]];
@@ -3175,14 +3232,15 @@ function pickXuchuTargets(h){
     if(df > maxDF) maxDF = df;
     if(dh > maxDH) maxDH = dh;
   }
-  const W_FORT = 0.6, W_SELF = 0.4;
-  pool.sort((a, b) => {
-    const sa = (vdist(a.pos, v2(fx, fy)) / Math.max(1, maxDF)) * W_FORT
-             + (vdist(a.pos, v2(hx, hy)) / Math.max(1, maxDH)) * W_SELF;
-    const sb = (vdist(b.pos, v2(fx, fy)) / Math.max(1, maxDF)) * W_FORT
-             + (vdist(b.pos, v2(hx, hy)) / Math.max(1, maxDH)) * W_SELF;
-    return sa - sb;
-  });
+  const W_FORT = 0.6, W_SELF = 0.4, COOLDOWN_PENALTY = 1.5, OTHER_XUCHU_PENALTY = 2.0;
+  const score = (m) => {
+    let s = (vdist(m.pos, v2(fx, fy)) / Math.max(1, maxDF)) * W_FORT
+          + (vdist(m.pos, v2(hx, hy)) / Math.max(1, maxDH)) * W_SELF;
+    if(m.xuchuKnockedUntil && now < m.xuchuKnockedUntil) s += COOLDOWN_PENALTY;
+    if(otherXuchuTargets.has(m)) s += OTHER_XUCHU_PENALTY;
+    return s;
+  };
+  pool.sort((a, b) => score(a) - score(b));
   return pool;
 }
 
@@ -3213,21 +3271,22 @@ function performXuchuAttack(h, targets, isTrue){
   // 主目标重度减速：基础 0.5s，buff xuchuPlate 每层 +0.3s
   applySlow(t, 0.5 + (G.buffs.xuchuPlate || 0), 0.5);
   // 击退（沿"许褚→怪物"方向延伸，许褚总在堡垒侧，天然远离堡垒）
+  // 同一目标 3s 内只能被许褚击退一次（伤害和减速继续生效，只是不再位移）— 防止"持续击退"机制过强
+  const KNOCK_PER_TARGET_CD = 3.0;
+  const canKnock = !(t.xuchuKnockedUntil && G.time < t.xuchuKnockedUntil - (XUCHU_KNOCK_CD - KNOCK_PER_TARGET_CD));
   const kx = t.pos.x - h.worldX, ky = t.pos.y - h.worldY;
   const klen = Math.hypot(kx, ky) || 1;
   const knockStartX = t.pos.x, knockStartY = t.pos.y;
-  const knockDist = 25;
-  t.pos.x += (kx / klen) * knockDist;
-  t.pos.y += (ky / klen) * knockDist;
-  // 击退冷却名单：刚顶过的目标 0.8s 内不再被许褚优先选
-  t.xuchuKnockedUntil = G.time + XUCHU_KNOCK_CD;
-  // 最小停留：本次攻击后必须再吃 1 拍才能切换（防止挥到一半被拽走）
-  h.xuchuStuckUntil = G.time + XUCHU_MIN_DWELL;
-  // 视觉
+  const knockDist = canKnock ? 25 : 0;
+  if(canKnock){
+    t.pos.x += (kx / klen) * knockDist;
+    t.pos.y += (ky / klen) * knockDist;
+  }
+  // 击退冷却名单：刚顶过的目标 0.8s 内会被索敌降权（非排除，避免最后只有1只时无法继续打）
+  t.xuchuKnockedUntil = G.time + KNOCK_PER_TARGET_CD;
+  // 视觉（震屏/闪屏极弱化：高频触发时不刺眼）
   spawnSkillPopup(t.pos.x, t.pos.y - 24, '冲!', '#ff4040');
-  triggerShake(3, 0.14);
-  triggerScreenFlash(0.10, '255,80,80', 0.18);
-  spawnParticleBurst(knockStartX, knockStartY, '#ff6040', 12);
+  spawnParticleBurst(knockStartX, knockStartY, '#ff6040', 8);
   for(let pi = 0; pi < 5; pi++){
     const f = pi / 5;
     G.particles.push({
@@ -3246,11 +3305,15 @@ function performXuchuAttack(h, targets, isTrue){
       .slice(0, 2);
     for(const m of others){
       dealDamage(m, dmg * chargeMult * 0.7, 'warrior', false, ['skill','single','melee']);
-      const kx2 = m.pos.x - h.worldX, ky2 = m.pos.y - h.worldY;
-      const kl2 = Math.hypot(kx2, ky2) || 1;
-      m.pos.x += (kx2 / kl2) * knockDist;
-      m.pos.y += (ky2 / kl2) * knockDist;
-      m.xuchuKnockedUntil = G.time + XUCHU_KNOCK_CD * 0.5;
+      // 同一目标击退冷却同样适用于群体连环
+      const canKnock2 = !(m.xuchuKnockedUntil && G.time < m.xuchuKnockedUntil - (XUCHU_KNOCK_CD - KNOCK_PER_TARGET_CD));
+      if(canKnock2){
+        const kx2 = m.pos.x - h.worldX, ky2 = m.pos.y - h.worldY;
+        const kl2 = Math.hypot(kx2, ky2) || 1;
+        m.pos.x += (kx2 / kl2) * 25;
+        m.pos.y += (ky2 / kl2) * 25;
+      }
+      m.xuchuKnockedUntil = G.time + KNOCK_PER_TARGET_CD * 0.5;
       spawnSkillPopup(m.pos.x, m.pos.y - 24, '连冲', '#ff6060');
     }
   }
@@ -4569,8 +4632,8 @@ function separateHeroes(){
     for(let j = i + 1; j < heroes.length; j++){
       if(heroes[j].cls === 'gather') continue;
       const a = heroes[i], b = heroes[j];
-      // 貂蝉之间不互推：她们围堡按 360°/N 角度自动卡位，互推会与该逻辑互相对抗导致卡死
-      if(a.heroId === 'diaochan' && b.heroId === 'diaochan') continue;
+      // 貂蝉与任何友方单位之间不互推：她按 360°/N 围堡卡位，外力会与该逻辑对抗导致卡死
+      if(a.heroId === 'diaochan' || b.heroId === 'diaochan') continue;
       const dx = b.worldX - a.worldX, dy = b.worldY - a.worldY;
       const dist = Math.hypot(dx, dy);
       if(dist < MIN_DIST && dist > 0.001){
@@ -4590,6 +4653,7 @@ function separateHeroesFromFortress(){
   for(let i = 0; i < G.heroes.length; i++){
     const h = G.heroes[i];
     if(h.cls === 'gather') continue;
+    if(h.heroId === 'diaochan') continue; // 貂蝉绕堡卡位，跳过堡碰撞
     const dx = h.worldX - fx, dy = h.worldY - fy;
     const dist = Math.hypot(dx, dy);
     if(dist < MIN_DIST && dist > 0.001){
@@ -8599,8 +8663,13 @@ function pickupLootChest(ch){
     seen.add(b.key);
     cards.push(b);
   }
-  // 固定 3 槽：剩余位置补 null（空槽）
+  // 固定 3 槽：剩余位置补 null（空槽 = 犒赏）
   while(cards.length < 3) cards.push(null);
+  // 打乱顺序，避免犒赏总落在固定位置（如第 2/3 格）
+  for(let i = cards.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [cards[i], cards[j]] = [cards[j], cards[i]];
+  }
   // 无尽关每 20 波宝箱：强制塞入 1 张"金色品质·真武将+1"奖励，位置随机
   const chestWaveNo = ch.waveNo || G.waveIdx || 0;
   const isQuotaWave = isInfiniteRun() && chestWaveNo > 0 && (chestWaveNo % 20 === 0);

@@ -1445,14 +1445,14 @@ const HERO_DEFS = {
   zhouyu: {
     cls:'mage', name:'周瑜', faction:'wu', title:'赤壁烈焰',
     passiveName:'灼身传火',
-    passive:'普攻给目标挂"燃身"DOT（每秒DPS×25/30/35/40%，持续5/6/6/7s）；燃身目标死亡时火焰跳到60px内未燃烧敌人',
-    truePassive:'DOT×60%/8s、最多链6次；燃身可叠3层每层+20% DOT'
+    passive:'普攻给目标挂"燃身"单体DOT（每秒DPS×25/30/35/40%，持续5/6/6/7s）；每次DOT生效有15%概率传染到60px最近未燃烧敌人，死亡时必传染；最多传染0/1/1/2次',
+    truePassive:'DOT×60%/6s、传染概率25%、最多链4次；燃身可叠3层每层+20% DOT'
   },
   guojia: {
     cls:'mage', name:'郭嘉', faction:'wei', title:'鬼才再世',
     passiveName:'积伤引爆',
-    passive:'自动主动维持场上同时存在 1/2/3/4 个"奇谋"标记（CD 4/3.5/3/2.5s）；标记目标 2s 后引爆 60px AOE，伤害=期间承受伤害总和×80/90/100/120%；标记中途死亡立即引爆。引爆保底=郭嘉DPS×1.5×系数（防止未受击的奇谋空爆）',
-    truePassive:'同时维持5标记、CD 2s、倒计时1.5s、引爆系数150%、半径80px+减速；标记中途死亡引爆+50%；标记期间形成"黑洞"——80px范围敌人被持续减速并缓慢吸附向标记中心'
+    passive:'自动主动维持场上同时存在 1/2/3/4 个"奇谋"标记（CD 4/3.5/3/2.5s）；标记目标 2s 后引爆 60px AOE，伤害=期间承受伤害总和×50/60/70/80%；标记中途死亡立即引爆。引爆保底=郭嘉DPS×0.8×系数（防止未受击的奇谋空爆）',
+    truePassive:'同时维持5标记、CD 2s、倒计时1.5s、引爆系数100%、半径80px+减速；中途死亡引爆+50%；标记期间形成"黑洞"——80px范围敌人被持续减速并缓慢吸附向标记中心'
   },
 
   // ---------- SUPPORT ----------
@@ -1519,7 +1519,7 @@ const HERO_TAGS = {
   zhangliao:   ['melee','aoe','slow'],
   lvmeng:      ['melee','aoe','slow'],
   zhangjiao:   ['ranged','aoe','stun'],
-  zhouyu:      ['ranged','aoe'],
+  zhouyu:      ['ranged','single'],
   guojia:      ['ranged','aoe'],
   caiwenji:    ['support','aoe','slow'],
   diaochan:    ['support','aoe','stun'],
@@ -3631,6 +3631,11 @@ function updateHeroPassives(dt){
         const tickDmg = b.dotPerSec * 0.5;
         dealDamage(m, tickDmg, 'mage', false, ['skill','single','ranged']);
         b.lastTick = G.time;
+        // 每次 tick 概率传染：基础 15%、真周瑜 25%；命中即消耗一个 chainLeft
+        if(m.hp > 0 && b.chainLeft > 0){
+          const chainP = b.isTrue ? 0.25 : 0.15;
+          if(Math.random() < chainP) tryZhouyuChain(m);
+        }
         if(Math.random() < 0.4){
           G.particles && G.particles.push({
             x: m.pos.x + (Math.random()-0.5)*16, y: m.pos.y + (Math.random()-0.5)*16,
@@ -3686,7 +3691,7 @@ function updateHeroPassives(dt){
     const cdList = [4.0, 3.5, 3.0, 2.5];
     const cd = isTrue ? 2.0 : cdList[Math.min(h.lv, 4) - 1];
     // 引爆系数：基础按等级 + buff guojiaBoom 每层 +0.2
-    let factor = isTrue ? 1.5 : [0.80, 0.90, 1.00, 1.20][Math.min(h.lv, 4) - 1];
+    let factor = isTrue ? 1.0 : [0.50, 0.60, 0.70, 0.80][Math.min(h.lv, 4) - 1];
     factor += (G.buffs.guojiaBoom || 0);
     // 引爆持续：固定 2s（真郭嘉 1.5s）
     const dur = isTrue ? 1.5 : 2.0;
@@ -3733,11 +3738,11 @@ function triggerGuojiaExplode(target, opts){
   // 引爆主伤害 = 累伤 × 系数；中途死亡时真·郭嘉 +50%
   let boomDmg = accum * factor;
   if(onDeath && isTrue) boomDmg *= 1.5;
-  // 保底伤害：取场上对应郭嘉的 DPS × 1.5s（折算约一个攻击周期的输出量）
+  // 保底伤害：取场上对应郭嘉的 DPS × 0.8s（折算约半个攻击周期的输出量）
   // —— 防止"敌人未受击却被引爆"导致 0 输出，浪费奇谋
   const owner = (G.heroes || []).find(h => h.id === ownerId);
   if(owner){
-    let baseLine = heroDPS(owner) * 1.5 * factor;
+    let baseLine = heroDPS(owner) * 0.8 * factor;
     if(onDeath && isTrue) baseLine *= 1.5;
     if(boomDmg < baseLine) boomDmg = baseLine;
   }
@@ -4041,45 +4046,43 @@ function drawDengaiMinions(ctx){
   }
 }
 
-// 怪物死亡时：周瑜火焰传染 + 郭嘉死亡立即引爆
+// 周瑜火焰传染：从 m 跳到 60px 内未燃烧的最近敌人
+function tryZhouyuChain(m){
+  if(!m || !m.zhouyuBurn || m.zhouyuBurn.chainLeft <= 0) return;
+  let best = null, bd = Infinity;
+  for(const m2 of G.monsters){
+    if(m2 === m || m2.hp <= 0) continue;
+    if(m2.zhouyuBurn && m2.zhouyuBurn.until > G.time) continue;
+    const d = vdist(m.pos, m2.pos);
+    if(d <= 60 && d < bd){ bd = d; best = m2; }
+  }
+  if(!best) return;
+  const remainTime = Math.max(1, m.zhouyuBurn.until - G.time);
+  best.zhouyuBurn = {
+    dotPerSec: m.zhouyuBurn.dotPerSec,
+    until: G.time + remainTime,
+    lastTick: G.time,
+    chainLeft: m.zhouyuBurn.chainLeft - 1,
+    stack: m.zhouyuBurn.stack || 1,
+    isTrue: m.zhouyuBurn.isTrue
+  };
+  m.zhouyuBurn.chainLeft -= 1; // 源也消耗一次链次数避免无限自传
+  spawnSkillPopup(best.pos.x, best.pos.y - 24, '传火', '#ff7028');
+  G.chainEffects = G.chainEffects || [];
+  G.chainEffects.push({
+    from: { x: m.pos.x, y: m.pos.y },
+    to:   { x: best.pos.x, y: best.pos.y },
+    until: G.time + 0.3,
+    color: '#ff7028'
+  });
+  spawnParticleBurst(m.pos.x, m.pos.y, '#ff7028', 6);
+  spawnParticleBurst(best.pos.x, best.pos.y, '#ff7028', 6);
+}
+
+// 怪物死亡时：周瑜火焰必传染 + 郭嘉死亡引爆已迁移至 dealDamage 直接处理
 function onMonsterDeath(m){
-  // 周瑜火焰：跳到 60px 内未燃烧的最近敌人
-  if(m.zhouyuBurn && m.zhouyuBurn.chainLeft > 0){
-    let best = null, bd = Infinity;
-    for(const m2 of G.monsters){
-      if(m2 === m || m2.hp <= 0) continue;
-      if(m2.zhouyuBurn && m2.zhouyuBurn.until > G.time) continue;
-      const d = vdist(m.pos, m2.pos);
-      if(d <= 60 && d < bd){ bd = d; best = m2; }
-    }
-    if(best){
-      const remainTime = Math.max(1, m.zhouyuBurn.until - G.time);
-      best.zhouyuBurn = {
-        dotPerSec: m.zhouyuBurn.dotPerSec,
-        until: G.time + remainTime,
-        lastTick: G.time,
-        chainLeft: m.zhouyuBurn.chainLeft - 1,
-        stack: m.zhouyuBurn.stack || 1,
-        isTrue: m.zhouyuBurn.isTrue
-      };
-      spawnSkillPopup(best.pos.x, best.pos.y - 24, '传火', '#ff7028');
-      // 传火弧线（橙红色 chain，与赵云蓝闪电链区分）
-      G.chainEffects = G.chainEffects || [];
-      G.chainEffects.push({
-        from: { x: m.pos.x, y: m.pos.y },
-        to:   { x: best.pos.x, y: best.pos.y },
-        until: G.time + 0.3,
-        color: '#ff7028'
-      });
-      // 起点和终点都迸火粒子
-      spawnParticleBurst(m.pos.x, m.pos.y, '#ff7028', 6);
-      spawnParticleBurst(best.pos.x, best.pos.y, '#ff7028', 6);
-    }
-  }
-  // 郭嘉标记：死亡时立即引爆（如果是真·郭嘉）
-  if(m.guojiaMark && m.guojiaMark.isTrue){
-    triggerGuojiaExplode(m);
-  }
+  // 周瑜火焰死亡：必触发传染
+  tryZhouyuChain(m);
 }
 
 // 太史慈：弹道附追魂数据，命中后由 updateProjectiles 引爆追踪
@@ -4171,14 +4174,14 @@ function applyZhouyuBurn(target, h, isTrue){
   let dotPct = isTrue ? 0.60 : dotPctList[Math.min(lv, 4) - 1];
   // 燃身强化 buff
   dotPct *= (1 + (G.buffs.zhouyuBurnDmg || 0));
-  let dur = isTrue ? 8 : durList[Math.min(lv, 4) - 1];
+  let dur = isTrue ? 6 : durList[Math.min(lv, 4) - 1];
   const existing = target.zhouyuBurn;
   let stack = 1;
   if(existing && existing.until > G.time){
     stack = Math.min(isTrue ? 3 : 1, (existing.stack || 1) + (isTrue ? 1 : 0));
   }
-  // 跳传上限 = 基础 + buff
-  const baseChain = isTrue ? 6 : [1, 2, 2, 3][Math.min(lv, 4) - 1];
+  // 跳传上限：基础调低以平衡"每 tick 概率传染 + 死亡必传"的扩散
+  const baseChain = isTrue ? 4 : [0, 1, 1, 2][Math.min(lv, 4) - 1];
   target.zhouyuBurn = {
     dotPerSec: dotPct * heroDPS(h) * (1 + 0.2 * (stack - 1)),
     until: G.time + dur,
@@ -8720,11 +8723,14 @@ function pickupLootChest(ch){
     const j = Math.floor(Math.random() * (i + 1));
     [cards[i], cards[j]] = [cards[j], cards[i]];
   }
-  // 无尽关每 20 波宝箱：强制塞入 1 张"金色品质·真武将+1"奖励，位置随机
+  // 无尽关每 30 波宝箱：强制塞入 1 张"金色品质·真武将+1"奖励
+  // 覆盖优先级：金币犒赏(null) > 紫色奖励(mid) > 随机
   const chestWaveNo = ch.waveNo || G.waveIdx || 0;
-  const isQuotaWave = isInfiniteRun() && chestWaveNo > 0 && (chestWaveNo % 20 === 0);
+  const isQuotaWave = isInfiniteRun() && chestWaveNo > 0 && (chestWaveNo % 30 === 0);
   if(isQuotaWave){
-    const slot = Math.floor(Math.random() * 3);
+    let slot = cards.findIndex(c => c == null);
+    if(slot < 0) slot = cards.findIndex(c => c && c.tier === 'mid');
+    if(slot < 0) slot = Math.floor(Math.random() * 3);
     cards[slot] = { __trueHeroQuota: true, tier: 'legend', name: '虎符传檄', desc: '本局可拥有的真·武将上限 +1', key: '__trueHeroQuotaPlus' };
   }
   paused = true;

@@ -4996,19 +4996,25 @@ function separateHeroes(){
 function separateHeroesFromFortress(){
   if(!G.fortress) return;
   const fx = G.fortress.worldX, fy = G.fortress.worldY;
-  const MIN_DIST = 22 + 28;
+  // AABB 与缩放后的堡垒视觉轮廓对齐，PAD 给英雄身体留缓冲
+  const PAD = 14;
+  const X0 = fx - 39 - PAD, X1 = fx + 39 + PAD;   // 左 / 右
+  const Y0 = fy - 57 - PAD, Y1 = fy + 39 + PAD;   // 顶 / 底
   for(let i = 0; i < G.heroes.length; i++){
     const h = G.heroes[i];
     if(h.cls === 'gather') continue;
-    if(h.heroId === 'diaochan') continue; // 貂蝉绕堡卡位，跳过堡碰撞
-    const dx = h.worldX - fx, dy = h.worldY - fy;
-    const dist = Math.hypot(dx, dy);
-    if(dist < MIN_DIST && dist > 0.001){
-      const overlap = MIN_DIST - dist;
-      const nx = dx / dist, ny = dy / dist;
-      h.worldX += nx * overlap;
-      h.worldY += ny * overlap;
-    }
+    if(h.heroId === 'diaochan') continue;
+    const hx = h.worldX, hy = h.worldY;
+    if(hx <= X0 || hx >= X1 || hy <= Y0 || hy >= Y1) continue;
+    // 在矩形内：从穿透最浅的边推出
+    const dL = hx - X0, dR = X1 - hx, dT = hy - Y0, dB = Y1 - hy;
+    const mn = Math.min(dL, dR, dT, dB);
+    if     (mn === dL) h.worldX = X0;
+    else if(mn === dR) h.worldX = X1;
+    else if(mn === dT) h.worldY = Y0;
+    else               h.worldY = Y1;
+  }
+}
   }
 }
 

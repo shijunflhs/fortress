@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>堡垒防卫者</title>
+<title>代号D</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; -webkit-user-select:none; -moz-user-select:none; -ms-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
 
@@ -180,6 +180,18 @@ canvas { position:absolute; top:0; left:0; width:360px; height:800px; }
   user-select:none;
 }
 #pause-btn:hover { background:rgba(0,0,0,0.85); border-color:#ccc; }
+
+/* 静音按钮（暂停按钮左侧） */
+#mute-btn {
+  position:absolute; top:80px; right:50px;
+  width:36px; height:32px;
+  background:rgba(0,0,0,0.6); color:#fff;
+  font:16px Arial; line-height:32px; text-align:center;
+  border:1px solid #888; border-radius:6px;
+  cursor:pointer; z-index:15;
+  user-select:none;
+}
+#mute-btn:hover { background:rgba(0,0,0,0.85); border-color:#ccc; }
 
 /* 暂停面板按钮（参考选英雄/失败结算的左右双按钮风格） */
 .pause-actions {
@@ -1115,6 +1127,9 @@ canvas { position:absolute; top:0; left:0; width:360px; height:800px; }
     <div class="side-box affix-box" id="affix-box"></div>
   </div>
 
+  <!-- 静音按钮 -->
+  <div id="mute-btn" onclick="toggleMute()" title="静音切换">🔊</div>
+
   <!-- 暂停按钮 -->
   <div id="pause-btn" onclick="togglePausePanel()">⏸</div>
 
@@ -1142,7 +1157,7 @@ canvas { position:absolute; top:0; left:0; width:360px; height:800px; }
   <div id="hud-bottom">
     <div id="discard-slot" class="hidden">
       <div class="ds-icon">🗑</div>
-      <div class="ds-text">丢弃</div>
+      <div class="ds-text">遣返</div>
     </div>
     <div id="gold-bar"><span class="gold-icon">💰</span>金币 <span class="gold-val" id="gold-val">50</span></div>
     <div id="hero-grid-wrap">
@@ -1174,11 +1189,11 @@ canvas { position:absolute; top:0; left:0; width:360px; height:800px; }
   <!-- DISCARD CONFIRM -->
   <div id="discard-confirm" class="hidden">
     <div class="dc-panel">
-      <div class="dc-title">确认丢弃</div>
+      <div class="dc-title">确认遣返</div>
       <div class="dc-msg" id="discard-confirm-msg"></div>
       <div class="dc-actions">
         <button class="btn btn-ghost" onclick="cancelDiscard()">取消</button>
-        <button class="btn btn-danger" onclick="confirmDiscard()">丢弃</button>
+        <button class="btn btn-danger" onclick="confirmDiscard()">遣返</button>
       </div>
     </div>
   </div>
@@ -1208,7 +1223,7 @@ canvas { position:absolute; top:0; left:0; width:360px; height:800px; }
 
   <!-- START OVERLAY -->
   <div id="start-overlay">
-    <h1>堡垒防卫者</h1>
+    <h1>代号D</h1>
     <div class="sub">六大英雄各显神通<br>采集·战士·射手·刺客·法师·辅助<br>同类同级英雄点击格子合并升级！</div>
     <div id="level-grid-wrap">
       <div id="level-grid-title">选择关卡</div>
@@ -1282,8 +1297,8 @@ const CLASS_COLOR = {
   assassin:'#4a90e2', mage:'#9b59b6', support:'#ff5fa2'
 };
 const CLASS_SPEED = {
-  // 全员累计移速 -44%（原值 ×0.56）；近战微调：warrior +5%、assassin +15% 回补"贴脸难"
-  gather:50.4, warrior:41.16, archer:42, assassin:77.28, mage:25.2, support:17.92
+  // 移速 ÷2（再减半）
+  gather:25.2, warrior:20.58, archer:21, assassin:38.64, mage:12.6, support:8.96
 };
 const CLASS_RANGE = {
   gather:0, warrior:50, archer:200, assassin:35, mage:150, support:120
@@ -1296,7 +1311,7 @@ const CLASS_ATK_CD = { // seconds between attacks
 //   ×1.25 抵消攻速 -20% 的 DPS 损耗
 //   ×1.25 抵消移速 -20% 带来的"贴脸时间减少 → 实际有效输出占比下降"
 // 合计 ×1.5625，保持原始关卡难度平衡（同时单次伤害更高，节奏感更明显）
-const CLASS_DPS_MULT = 1.5625;
+const CLASS_DPS_MULT = 2.031;  // 1.5625 × 1.30（攻击力上浮30%）
 const CLASS_DPS = {
   warrior:  [10, 20, 38, 70, 160],
   archer:   [ 8, 15, 29, 56, 128],
@@ -2148,7 +2163,7 @@ function tryReleaseLordSkill(){
   triggerScreenFlash(0.3, '255, 215, 80', 0.45);
   triggerShake(5, 0.25);
   spawnParticleBurst(fx, fy, '#ffd700', 24);
-  sfx('explode');
+  sfx('lord_pulse');
   G.lordSkillCD = LORD.cooldown;
 }
 
@@ -2341,7 +2356,11 @@ function findMergeableHintHeroes(){
   return heroes;
 }
 
-// 丢弃确认弹框
+// 遣返确认弹框
+function computeDiscardRefund(){
+  const cost = computeSummonCost(G.summonN || 0);
+  return Math.max(10, Math.floor(cost * 0.3 / 10) * 10);
+}
 function openDiscardConfirm(slotIdx){
   const h = getHeroAtSlot(slotIdx);
   if(!h) return;
@@ -2349,7 +2368,9 @@ function openDiscardConfirm(slotIdx){
   G._discardSlotIdx = slotIdx;
   const def = HERO_DEFS[h.heroId];
   const lvLabel = h.lv >= 5 ? '真·' + (def && def.name || '') : 'L' + h.lv + ' ' + (def && def.name || '');
-  document.getElementById('discard-confirm-msg').textContent = `即将丢弃：${lvLabel}（${CLASS_ROLE_CN[h.cls] || ''}）`;
+  const refund = computeDiscardRefund();
+  document.getElementById('discard-confirm-msg').innerHTML =
+    `即将遣返：${lvLabel}（${CLASS_ROLE_CN[h.cls] || ''}）<br><span style="color:#ffd700;font-weight:bold">返还 ${refund} 金币</span>`;
   document.getElementById('discard-confirm').classList.remove('hidden');
 }
 function cancelDiscard(){
@@ -2365,11 +2386,13 @@ function confirmDiscard(){
   if(idx == null || idx < 0) return;
   const h = getHeroAtSlot(idx);
   if(!h) return;
-  // 移除该英雄
+  const refund = computeDiscardRefund();
+  G.gold += refund;
   G.heroes = G.heroes.filter(x => x !== h);
-  spawnSkillPopup(h.worldX, h.worldY - 18, '丢弃', '#ff6060');
-  spawnParticleBurst(h.worldX, h.worldY, '#ff6060', 14);
+  spawnSkillPopup(h.worldX, h.worldY - 18, `遣返 +${refund}`, '#ffd700');
+  spawnParticleBurst(h.worldX, h.worldY, '#ffd700', 14);
   if(G.selectedSlot === idx) G.selectedSlot = -1;
+  updateHUD();
   renderHeroGrid();
 }
 window.cancelDiscard = cancelDiscard;
@@ -2418,7 +2441,7 @@ function buyUnlockSlot(i){
   for(let k = 0; k < newIdx; k++) cycleStart += SLOT_UNLOCK_STEPS[k];
   G.summonN = cycleStart;
   spawnSkillPopup(CW / 2, CH * 0.5, '解锁新槽位！', '#ffd700');
-  if(typeof sfx === 'function') sfx('upgrade');
+  if(typeof sfx === 'function') sfx('slot_unlock');
   updateHUD();
   renderHeroGrid();
   updateDiscardSlotVisibility();
@@ -2465,34 +2488,32 @@ function drawFortress(ctx, f){
     return;
   }
   // 简化版：双层描边 + 实色块，确保在任何地图（含第5关风沙）上轮廓清晰
-  // 投影衬底
+  // 投影衬底（原尺寸 ×1.5）
   ctx.shadowColor = 'rgba(0,0,0,0.85)';
-  ctx.shadowBlur = 6;
+  ctx.shadowBlur = 9;
   ctx.fillStyle = '#6b3a2a';
-  ctx.fillRect(x - 26, y - 38, 52, 64);
+  ctx.fillRect(x - 39, y - 57, 78, 96);
   ctx.restore();
-  ctx.fillStyle = '#6b3a2a'; ctx.fillRect(x - 26, y - 38, 52, 64);
+  ctx.fillStyle = '#6b3a2a'; ctx.fillRect(x - 39, y - 57, 78, 96);
   ctx.fillStyle = '#8b5a3a';
-  ctx.fillRect(x - 16, y - 54, 11, 22);
-  ctx.fillRect(x + 5,  y - 54, 11, 22);
+  ctx.fillRect(x - 24, y - 81, 16, 33);
+  ctx.fillRect(x +  8, y - 81, 16, 33);
   // 黑色主描边
   ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(x - 26, y - 38, 52, 64);
-  ctx.strokeRect(x - 16, y - 54, 11, 22);
-  ctx.strokeRect(x + 5,  y - 54, 11, 22);
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x - 39, y - 57, 78, 96);
+  ctx.strokeRect(x - 24, y - 81, 16, 33);
+  ctx.strokeRect(x +  8, y - 81, 16, 33);
   // 浅金高光描边
   ctx.strokeStyle = 'rgba(255,220,160,0.5)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x - 25, y - 37, 50, 62);
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(x - 38, y - 56, 76, 93);
   // 门
-  ctx.fillStyle = '#ddd'; ctx.fillRect(x - 10, y - 10, 20, 18);
+  ctx.fillStyle = '#ddd'; ctx.fillRect(x - 15, y - 15, 30, 27);
   ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x - 10, y - 10, 20, 18);
-  drawHPBar(ctx, x, y - 48, 54, 8, f.hp, f.maxHp, '#2ecc71', '#e74c3c');
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
-  ctx.fillText(`${Math.ceil(f.hp)}/${f.maxHp}`, x, y - 50);
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(x - 15, y - 15, 30, 27);
+  drawHPBar(ctx, x, y - 72, 80, 10, f.hp, f.maxHp, '#2ecc71', '#e74c3c');
 }
 
 // ============================================================
@@ -2529,8 +2550,266 @@ function makeHero(lv, cls, heroId){
     buffStacks: 0,
     buffAtkBonus: 0,
     cloudCD,
-    auraCD
+    auraCD,
+    _walkPhase: 0, _facing: 1, _prevX: null, _prevY: null
   };
+}
+
+// ─── Hero Sprite helpers ─────────────────────────────────────────────────────
+// Shade a CSS hex color lighter (+) or darker (-)
+function shadeHex(hex, f) {
+  try {
+    let r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    if(f > 0){ r=Math.min(255,Math.round(r+(255-r)*f)); g=Math.min(255,Math.round(g+(255-g)*f)); b=Math.min(255,Math.round(b+(255-b)*f)); }
+    else { r=Math.max(0,Math.round(r*(1+f))); g=Math.max(0,Math.round(g*(1+f))); b=Math.max(0,Math.round(b*(1+f))); }
+    return '#'+r.toString(16).padStart(2,'0')+g.toString(16).padStart(2,'0')+b.toString(16).padStart(2,'0');
+  } catch(e){ return hex; }
+}
+
+// Draw a humanoid hero sprite; animation state stored on hero object.
+// Walk phase is driven by actual pixel displacement each frame → zero drift.
+function drawHeroSprite(ctx, h, hs, col) {
+  const x = h.worldX, y = h.worldY;
+
+  // ── Animation state (updated once per render frame) ──────────────────────
+  const px = (h._prevX !== null) ? h._prevX : x;
+  const py = (h._prevY !== null) ? h._prevY : y;
+  const ddx = x - px, ddy = y - py;
+  const moved = Math.hypot(ddx, ddy);
+  const isMoving = moved > 0.15;
+
+  // Sticky facing: only flip on meaningful horizontal movement
+  if (Math.abs(ddx) > 0.3) h._facing = ddx > 0 ? 1 : -1;
+  const f = h._facing;
+
+  // Walk phase: driven by actual displacement only — zero drift
+  if (isMoving) {
+    h._walkPhase = ((h._walkPhase || 0) + moved * 0.30) % (Math.PI * 2);
+  } else {
+    const wp0 = h._walkPhase || 0;
+    const near = Math.round(wp0 / Math.PI) * Math.PI;
+    h._walkPhase = Math.abs(wp0 - near) < 0.02 ? near : wp0 + (near - wp0) * 0.12;
+  }
+  h._prevX = x; h._prevY = y;
+  const wp = h._walkPhase;
+
+  // Attack animation: 0→1 wind-up (0–150ms), 1→0 recoil (150–350ms)
+  const atkE = G.time - (h.lastAttackTime || -999);
+  const atkA = atkE < 0.15 ? atkE / 0.15 : (atkE < 0.35 ? 1 - (atkE - 0.15) / 0.20 : 0);
+
+  // ── Derived animation values ──────────────────────────────────────────────
+  const bob   = isMoving ? Math.sin(wp * 2) * hs * 0.110 : 0;  // body bob — clearly visible
+  const legSX = Math.sin(wp) * hs * 0.280;                      // leg swing — wide arc
+  const legLY = Math.abs(Math.sin(wp)) * hs * 0.155;            // leg lift — clear lift
+
+  // ── Chibi geometry ────────────────────────────────────────────────────────
+  // Head (hair ball): large — occupies top half of bounding box
+  const HR  = hs * 0.500;                   // hair-circle radius
+  const HX  = x;
+  const HY  = y - HR + bob;                // hair-circle centre (top = y − hs + bob ≈ box top)
+
+  // Face: skin circle, slightly smaller, offset toward facing & downward in head
+  const FR  = HR * 0.760;                   // face radius
+  const FX  = HX + f * HR * 0.070;         // slight facing lean
+  const FY  = HY + HR * 0.150;             // face centre lower → hair visible on top & sides
+
+  // Body: wide trapezoid — shoulders visible, waist tapers
+  const BY0 = HY + HR - hs * 0.035;        // body top (slightly overlaps hair bottom)
+  const BW0 = hs * 0.520;                   // shoulder half-width (chunky chibi look)
+  const BH  = hs * 0.390;                   // body height — fills lower head space
+  const BY1 = BY0 + BH;                     // hip level
+  const BW1 = hs * 0.360;                   // hip half-width
+
+  // Legs: proper 2-head-body stubs
+  const LLX  = x - hs * 0.180;             // left leg centre X
+  const RLX  = x + hs * 0.180;             // right leg centre X
+  const LHW  = hs * 0.130;                  // leg half-width
+  const LY0  = BY1;                         // leg top
+  const FOTY = y + hs * 0.940;             // foot Y — true 2-head-body proportion
+
+  // ── Colour palette ────────────────────────────────────────────────────────
+  const SKIN  = '#ffd9ae';
+  const HAIR  = col;
+  const BODY  = shadeHex(col, -0.08);
+  const LIMB  = shadeHex(col, -0.26);
+  const SHOE  = shadeHex(col, -0.42);
+  const OL    = 'rgba(18,8,4,0.82)';        // dark outline (cel-shade feel)
+  const OLW   = Math.max(1.2, hs * 0.10);
+
+  ctx.save();
+  ctx.lineCap  = 'round';
+  ctx.lineJoin = 'round';
+
+  // ── Ground shadow ─────────────────────────────────────────────────────────
+  ctx.fillStyle = 'rgba(0,0,0,0.20)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + hs * 0.87, hs * 0.44, hs * 0.11, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── Legs ─────────────────────────────────────────────────────────────────
+  const lFX = LLX + legSX,  lFY = FOTY - legLY;   // left foot pos
+  const rFX = RLX - legSX,  rFY = FOTY + legLY;   // right foot pos (opposite phase)
+
+  ctx.fillStyle   = LIMB;
+  ctx.strokeStyle = OL;
+  ctx.lineWidth   = OLW * 0.75;
+  [[LLX, lFX, lFY], [RLX, rFX, rFY]].forEach(([bx, fx, fy]) => {
+    // Leg pillar (trapezoid stub)
+    ctx.beginPath();
+    ctx.moveTo(bx - LHW, LY0);
+    ctx.lineTo(bx + LHW, LY0);
+    ctx.lineTo(fx + LHW, fy);
+    ctx.lineTo(fx - LHW, fy);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Round shoe
+    ctx.fillStyle = SHOE;
+    ctx.beginPath();
+    ctx.ellipse(fx, fy + hs * 0.052, hs * 0.115, hs * 0.060, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = LIMB;                           // restore for next leg
+  });
+
+  // ── Body ─────────────────────────────────────────────────────────────────
+  ctx.fillStyle   = BODY;
+  ctx.strokeStyle = OL;
+  ctx.lineWidth   = OLW;
+  ctx.beginPath();
+  ctx.moveTo(x - BW0, BY0);
+  ctx.lineTo(x + BW0, BY0);
+  ctx.lineTo(x + BW1, BY1);
+  ctx.lineTo(x - BW1, BY1);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // ── Arms ─────────────────────────────────────────────────────────────────
+  const ARM_Y   = BY0 + BH * 0.28;
+  const ARM_LEN = hs * 0.13;
+  ctx.lineWidth = Math.max(2, hs * 0.18);
+
+  ctx.strokeStyle = LIMB;                           // back arm (away from facing)
+  ctx.beginPath();
+  ctx.moveTo(x - f * BW0, ARM_Y);
+  ctx.lineTo(x - f * (BW0 + ARM_LEN), ARM_Y + hs * 0.07);
+  ctx.stroke();
+
+  ctx.strokeStyle = BODY;                           // front arm (extends on attack)
+  ctx.beginPath();
+  ctx.moveTo(x + f * BW0, ARM_Y);
+  ctx.lineTo(x + f * (BW0 + ARM_LEN + atkA * hs * 0.15), ARM_Y - atkA * hs * 0.07);
+  ctx.stroke();
+
+  // ── Hair (full circle — back layer) ──────────────────────────────────────
+  ctx.fillStyle   = HAIR;
+  ctx.strokeStyle = OL;
+  ctx.lineWidth   = OLW;
+  ctx.beginPath();
+  ctx.arc(HX, HY, HR, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+
+  // ── Face (skin circle — sits inside hair, shows hair on top & sides) ──────
+  ctx.fillStyle   = SKIN;
+  ctx.strokeStyle = OL;
+  ctx.lineWidth   = OLW * 0.85;
+  ctx.beginPath();
+  ctx.arc(FX, FY, FR, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+
+  // ── Eyes ─────────────────────────────────────────────────────────────────
+  const ER  = Math.max(1, FR * 0.165);
+  const EY  = FY - FR * 0.040;
+  const ESX = FR * 0.280;
+  ctx.fillStyle = 'rgba(10,5,2,0.90)';
+  ctx.beginPath();
+  ctx.arc(FX - ESX, EY, ER, 0, Math.PI * 2);
+  ctx.arc(FX + ESX, EY, ER, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── Cheek blush (chibi staple) ────────────────────────────────────────────
+  ctx.fillStyle = 'rgba(255,130,110,0.28)';
+  ctx.beginPath();
+  ctx.arc(FX - FR * 0.44, EY + FR * 0.22, FR * 0.22, 0, Math.PI * 2);
+  ctx.arc(FX + FR * 0.44, EY + FR * 0.22, FR * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── Hair fringe (covers top of face, using counterclockwise arc) ──────────
+  // Draws the forehead-hair crescent over the face top edge
+  ctx.fillStyle = HAIR;
+  ctx.beginPath();
+  ctx.arc(HX, HY, HR,  Math.PI * 0.62, Math.PI * 0.38, true);  // top arc CCW
+  ctx.arc(FX, FY, FR,  Math.PI * 0.28, Math.PI * 0.72, false); // inner face arc CW
+  ctx.closePath();
+  ctx.fill();
+
+  // ── Level tier visuals — bold enough to read at small screen sizes ─────────
+  const lv = h.lv || 1;
+  const isL5 = lv >= 5;
+
+  if (lv >= 2) {
+    // L2+: bright sash stripe across torso — thick, contrasting color
+    ctx.strokeStyle = shadeHex(col, 0.38);
+    ctx.lineWidth = Math.max(2.5, hs * 0.13);
+    ctx.beginPath();
+    ctx.moveTo(x - BW1 * 0.92, BY0 + BH * 0.55);
+    ctx.lineTo(x + BW1 * 0.92, BY0 + BH * 0.55);
+    ctx.stroke();
+  }
+
+  if (lv >= 3) {
+    // L3+: two triangular hair spikes above head — clear silhouette change
+    const spikeH = HR * 0.58;
+    ctx.fillStyle = HAIR;
+    ctx.strokeStyle = OL;
+    ctx.lineWidth = OLW * 0.75;
+    const spikeBase = HY - HR * 0.80;
+    // left spike
+    ctx.beginPath();
+    ctx.moveTo(HX - HR * 0.28, spikeBase);
+    ctx.lineTo(HX - HR * 0.60, spikeBase - spikeH);
+    ctx.lineTo(HX - HR * 0.04, spikeBase - spikeH * 0.40);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // right spike
+    ctx.beginPath();
+    ctx.moveTo(HX + HR * 0.28, spikeBase);
+    ctx.lineTo(HX + HR * 0.60, spikeBase - spikeH);
+    ctx.lineTo(HX + HR * 0.04, spikeBase - spikeH * 0.40);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+
+  if (lv >= 4) {
+    // L4+: bold headband arc on forehead, plus center gem
+    const bandCol = isL5 ? '#ffd700' : shadeHex(col, 0.55);
+    ctx.strokeStyle = bandCol;
+    ctx.lineWidth = Math.max(3, hs * 0.13);
+    ctx.beginPath();
+    ctx.arc(FX, FY, FR * 0.95, -Math.PI * 0.68, -Math.PI * 0.32, false);
+    ctx.stroke();
+    // center forehead gem
+    ctx.fillStyle = bandCol;
+    ctx.beginPath();
+    ctx.arc(FX, FY - FR * 0.88, Math.max(2.5, hs * 0.11), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (isL5) {
+    // L5 真: three prominent gold crown orbs above hair
+    const crownR = Math.max(3, hs * 0.125);
+    const crownBaseY = HY - HR * 0.96;
+    ctx.fillStyle = '#ffd700';
+    ctx.strokeStyle = 'rgba(110,55,0,0.95)';
+    ctx.lineWidth = Math.max(1, hs * 0.065);
+    const pts = [[-HR * 0.44, crownR * 0.50], [0, -crownR * 1.90], [HR * 0.44, crownR * 0.50]];
+    for (const [ox, oy] of pts) {
+      const r = crownR * (ox === 0 ? 1.20 : 0.80);
+      ctx.beginPath();
+      ctx.arc(HX + ox, crownBaseY + oy, r, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
+  }
+
+  ctx.restore();
 }
 
 function drawHeroClassMark(ctx, h, size, color){
@@ -3298,6 +3577,7 @@ function performXuchuAttack(h, targets, isTrue){
   t.xuchuKnockedUntil = G.time + KNOCK_PER_TARGET_CD;
   // 视觉（震屏/闪屏极弱化：高频触发时不刺眼）
   spawnSkillPopup(t.pos.x, t.pos.y - 24, '冲!', '#ff4040');
+  sfx('xuchu_charge');
   spawnParticleBurst(knockStartX, knockStartY, '#ff6040', 8);
   for(let pi = 0; pi < 5; pi++){
     const f = pi / 5;
@@ -3378,6 +3658,7 @@ function performLvbuAttack(h, targets, isTrue){
       const furyDur = 1 + (G.buffs.lvbuFury || 0);
       h.lvbuFengXianUntil = G.time + furyDur;
     }
+    sfx('lvbu_sweep');
     // L5 双无双触发"吕奉先"（强化态）
     if(isTrue){
       h.lvbuLastWuShuang = h.lvbuLastWuShuang || 0;
@@ -3386,12 +3667,14 @@ function performLvbuAttack(h, targets, isTrue){
         h.lvbuLastWuShuang = 0;
         spawnSkillPopup(h.worldX, h.worldY - 32, '吕奉先!', '#fff080');
         triggerScreenFlash(0.2, '255,215,0', 0.35);
+        sfx('lvbu_fengxian');
       } else {
         h.lvbuLastWuShuang = G.time;
       }
     }
   } else {
     dealDamage(t, dmg, 'warrior', false, ['normal','single','melee']);
+    sfx('melee_hit');
   }
   h.lastAttackTime = G.time;
 }
@@ -3402,6 +3685,7 @@ function performZhangliaoAttack(h, targets, isTrue){
   if(!t) return;
   const dmg = computeDamage(h, t);
   dealDamage(t, dmg, 'assassin', false, ['normal','single','melee']);
+  sfx('melee_hit');
   h.lastAttackTime = G.time;
 }
 
@@ -3431,10 +3715,12 @@ function performLvmengAttack(h, targets, isTrue){
     if(h.lv >= 4) applySlow(t, 0.5, 0.4);
     spawnSkillPopup(t.pos.x, t.pos.y - 26, '白衣突袭', '#80d8ff');
     triggerShake(3, 0.16);
+    sfx('lvmeng_surge');
     h.lvmengStealth = false;
     h.lvmengStealthSince = 0;
   } else {
     dealDamage(t, dmg, 'assassin', false, ['normal','single','melee']);
+    sfx('melee_hit');
   }
   h.lastAttackTime = G.time;
 }
@@ -3487,6 +3773,7 @@ function updateHeroPassives(dt){
           triggerScreenFlash(0.12, '255, 95, 162', 0.18);
           G.explosionEffects = G.explosionEffects || [];
           G.explosionEffects.push({ x: h.worldX, y: h.worldY, radius: r, until: G.time + 0.35, color: '#ff5fa2' });
+          sfx('charm');
         }
         h.diaochanCharmNextAt = G.time + cd;
       }
@@ -3515,7 +3802,6 @@ function updateHeroPassives(dt){
             t.xunyuCrownLv = h.lv;  // 记录来源等级，用于加成阶梯
             spawnSkillPopup(t.worldX, t.worldY - 32, '加冕', '#ffd700');
             spawnParticleBurst(t.worldX, t.worldY, '#ffd700', 14);
-            // 王佐之才：每加冕回堡 2HP/层
             const kingStacks = G.buffs.xunyuKing || 0;
             if(kingStacks > 0 && G.fortress){
               G.fortress.hp = Math.min(G.fortress.maxHp, G.fortress.hp + 2 * kingStacks);
@@ -3523,6 +3809,7 @@ function updateHeroPassives(dt){
             }
           }
           h.xunyuNextAt = G.time + cd;
+          sfx('xunyu_crown');
         } else {
           h.xunyuNextAt = G.time + 0.5;
         }
@@ -3549,9 +3836,21 @@ function updateHeroPassives(dt){
         if(best){
           // 记录出发点（用于残影）
           const fromX = h.worldX, fromY = h.worldY;
+          // 选落点：绕怪物 8 个方向找不与其他英雄重叠的位置
+          const TELE_SEP = 30;
+          let tx = best.pos.x, ty = best.pos.y - 8;
+          const others = (G.heroes || []).filter(o => o !== h);
+          let ok = others.every(o => Math.hypot(o.worldX - tx, o.worldY - ty) >= TELE_SEP);
+          for (let att = 0; !ok && att < 8; att++) {
+            const ang = (att / 8) * Math.PI * 2;
+            tx = best.pos.x + Math.cos(ang) * TELE_SEP;
+            ty = best.pos.y - 8 + Math.sin(ang) * TELE_SEP;
+            ok = others.every(o => Math.hypot(o.worldX - tx, o.worldY - ty) >= TELE_SEP);
+          }
           // 瞬移
-          h.worldX = best.pos.x;
-          h.worldY = best.pos.y - 8;
+          h.worldX = tx; h.worldY = ty;
+          // 同步动画锚点，防止步态相位乱跳
+          h._prevX = tx; h._prevY = ty;
           // 命中：×2 + 25px AOE 50%
           const dmg = computeDamage(h, best);
           dealDamage(best, dmg * 2, 'assassin', true, ['skill','single','melee']);
@@ -3579,6 +3878,7 @@ function updateHeroPassives(dt){
           // 终点圆形爆炸视觉
           G.explosionEffects = G.explosionEffects || [];
           G.explosionEffects.push({ x: best.pos.x, y: best.pos.y, radius: 25, until: G.time + 0.22, color: '#4a90e2' });
+          sfx('zhangliao_teleport');
           // 威名连击：连续3次触发全场减速
           h.zhangliaoHits = (h.zhangliaoHits || 0) + 1;
           if(h.zhangliaoHits >= 3){
@@ -3594,6 +3894,7 @@ function updateHeroPassives(dt){
             spawnSkillPopup(h.worldX, h.worldY - 32, '威名!', '#ffd700');
             triggerScreenFlash(0.18, '255, 215, 80', 0.3);
             triggerShake(4, 0.18);
+            sfx('zhangliao_fame');
             h.zhangliaoHits = 0;
           }
           spawnSkillPopup(best.pos.x, best.pos.y - 22, '突袭', CLASS_COLOR.assassin);
@@ -3615,6 +3916,7 @@ function updateHeroPassives(dt){
       if(!h.lvmengStealth && G.time - lastAtk > needSilence){
         h.lvmengStealth = true;
         h.lvmengStealthSince = G.time;
+        sfx('lvmeng_stealth_in');
       }
     }
   }
@@ -3719,6 +4021,7 @@ function updateHeroPassives(dt){
         };
         h.guojiaActiveMarks.push(best);
         spawnSkillPopup(best.pos.x, best.pos.y - 24, '奇谋', '#a070ff');
+        sfx(isTrue ? 'guojia_blackhole' : 'mark');
         h.guojiaNextAt = G.time + cd;
       } else {
         // 没目标可标，0.3s 后重试
@@ -3798,10 +4101,12 @@ function onGatherDeposit(h, amount){
       spawnSkillPopup(h.worldX, h.worldY - 32, '号令', '#80ffaa');
     }
     spawnSkillPopup(h.worldX, h.worldY - 22, '军粮', '#80ffaa');
+    sfx('lusu_return');
   }
   // 邓艾：每次入账召唤矿工小兵到最远矿脉处采集
   if(h.heroId === 'dengai'){
     spawnDengaiMinion(h);
+    sfx('dengai_miner');
   }
 }
 
@@ -4006,42 +4311,68 @@ function drawDengaiMinions(ctx){
   if(!G.minions || G.minions.length === 0) return;
   for(const u of G.minions){
     ctx.save();
-    if(u.mode === 'attack'){
-      // 攻击小人 - 红橙色
-      ctx.fillStyle = '#ff8030';
-      ctx.fillRect(u.x - 6, u.y - 6, 12, 12);
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
-      ctx.strokeRect(u.x - 6, u.y - 6, 12, 12);
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px Arial';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('兵', u.x, u.y + 0.5);
-      // 剩余时长 ring
-      const left = Math.max(0, u.attackUntil - G.time);
+    const x = u.x, y = u.y;
+    const isAtk = u.mode === 'attack';
+    const col  = isAtk ? '#e85020' : '#c8880a';  // 攻=红橙 / 矿=金黄
+    const col2 = isAtk ? '#ff9060' : '#ffe070';  // highlight
+
+    // ── 地面阴影 ────────────────────────────────────────────────────────────
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 8, 6, 2.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ── 身体（小圆柱）──────────────────────────────────────────────────────
+    const OL  = 'rgba(12,4,2,0.85)';
+    const OLW = 1.3;
+    ctx.strokeStyle = OL; ctx.lineWidth = OLW;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.ellipse(x, y + 2, 4.5, 5.5, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    // ── 头部 ───────────────────────────────────────────────────────────────
+    const hR = 5.5;
+    const hG = ctx.createRadialGradient(x - hR * 0.28, y - hR * 1.10, 1, x, y - hR * 0.88, hR);
+    hG.addColorStop(0, col2); hG.addColorStop(1, col);
+    ctx.fillStyle = hG;
+    ctx.beginPath();
+    ctx.arc(x, y - hR * 0.88, hR, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    // ── 眼睛 ───────────────────────────────────────────────────────────────
+    const eY = y - hR * 0.88 - hR * 0.10;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(x - hR * 0.30, eY, 1.6, 0, Math.PI * 2);
+    ctx.arc(x + hR * 0.30, eY, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.beginPath();
+    ctx.arc(x - hR * 0.28, eY, 0.80, 0, Math.PI * 2);
+    ctx.arc(x + hR * 0.28, eY, 0.80, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ── 攻击模式：剩余时间弧 ──────────────────────────────────────────────
+    if(isAtk){
+      const left  = Math.max(0, u.attackUntil - G.time);
       const ratio = left / 10;
       ctx.strokeStyle = ratio > 0.3 ? '#ffd700' : '#ff4040';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.8;
       ctx.beginPath();
-      ctx.arc(u.x, u.y, 9, -Math.PI/2, -Math.PI/2 + ratio * Math.PI * 2);
+      ctx.arc(x, y, 10, -Math.PI / 2, -Math.PI / 2 + ratio * Math.PI * 2);
       ctx.stroke();
-    } else {
-      // 矿工 - 黄色
-      ctx.fillStyle = '#d4a040';
-      ctx.fillRect(u.x - 5, u.y - 5, 10, 10);
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
-      ctx.strokeRect(u.x - 5, u.y - 5, 10, 10);
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 8px Arial';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('矿', u.x, u.y + 0.5);
-      // 采集进度条
-      if(u.cap > 0){
-        const w = 12;
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(u.x - w/2, u.y + 8, w, 2);
-        ctx.fillStyle = '#80ffaa';
-        ctx.fillRect(u.x - w/2, u.y + 8, w * (u.collected / u.cap), 2);
-      }
     }
-    ctx.textBaseline = 'alphabetic';
+
+    // ── 采矿模式：进度条 ───────────────────────────────────────────────────
+    if(!isAtk && u.cap > 0){
+      const bw = 14;
+      ctx.fillStyle = 'rgba(0,0,0,0.50)';
+      ctx.fillRect(x - bw / 2, y + 10, bw, 2);
+      ctx.fillStyle = '#80ffaa';
+      ctx.fillRect(x - bw / 2, y + 10, bw * Math.min(1, u.collected / u.cap), 2);
+    }
+
     ctx.restore();
   }
 }
@@ -4077,6 +4408,7 @@ function tryZhouyuChain(m){
   });
   spawnParticleBurst(m.pos.x, m.pos.y, '#ff7028', 6);
   spawnParticleBurst(best.pos.x, best.pos.y, '#ff7028', 6);
+  sfx('burn');
 }
 
 // 怪物死亡时：周瑜火焰必传染 + 郭嘉死亡引爆已迁移至 dealDamage 直接处理
@@ -4233,11 +4565,13 @@ function performAttack(h, targets, maxT){
       spawnSkillPopup(h.worldX, h.worldY - 30, '狂怒!', '#ff4040');
       triggerShake(3, 0.15);
       spawnParticleBurst(h.worldX, h.worldY, '#ff4040', 10);
+      sfx('zhangfei_fury');
     }
     const t = targets[0];
     if(!t) return;
     let dmg = computeDamage(h, t);
     dealDamage(t, dmg, 'warrior', false, ['normal','single','melee']);
+    sfx('melee_hit');
     // "横扫千军"增益才有溅射AOE，普攻保持单体
     const stunChance = 0.25 + (h.lv - 1) * 0.05 + (G.buffs.warriorStun || 0);
     const ccMult = (G.levelConfig && G.levelConfig.affix && G.levelConfig.affix.ccDurationMult) || 1;
@@ -4347,6 +4681,7 @@ function performAttack(h, targets, maxT){
     if(!t) return;
     let dmg = computeDamage(h, t);
     dealDamage(t, dmg, 'assassin', false, ['normal','single','melee']);
+    sfx('melee_hit');
 
     // 真·赵云「常山赵子龙」：攻击瞬移近敌（突进感）
     if(isTrue){
@@ -4390,6 +4725,7 @@ function performAttack(h, targets, maxT){
       // 赵云闪电链触发：在主目标上方提示 + 震屏
       spawnSkillPopup(t.pos.x, t.pos.y - 28, '闪电链', CLASS_COLOR.assassin);
       triggerShake(2.5, 0.12);
+      sfx('zhao_chain');
     }
   } else if(h.cls === 'mage'){
     // 周瑜/郭嘉走自己的弹道
@@ -4560,118 +4896,76 @@ function drawHero(ctx, h){
     ctx.shadowBlur = 0;
   }
 
-  // === 阴影（与矿工一致）===
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.32)';
-  ctx.beginPath();
-  ctx.ellipse(h.worldX, h.worldY + hs + 2, hs * 0.95, hs * 0.32, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+  // === 人形小人（视觉尺寸 = 碰撞半径 × 1.6，不影响游戏逻辑）===
+  drawHeroSprite(ctx, h, hs * 1.6, color);
 
+  // 受击闪白光圈
   const flashing = h.flashUntil && h.flashUntil > G.time;
-  // === 主体色块 + 白色描边（矿工质感）===
-  ctx.fillStyle = color;
-  ctx.fillRect(h.worldX - hs, h.worldY - hs, hs * 2, hs * 2);
-  // 默认白色描边（所有英雄都有）
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(h.worldX - hs, h.worldY - hs, hs * 2, hs * 2);
-
-  if(flashing){
-    const phase = ((G.time * 6) | 0) % 2;
-    if(phase === 0){
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 3;
-      ctx.shadowColor = '#fff';
-      ctx.shadowBlur = 12;
-      ctx.strokeRect(h.worldX - hs - 3, h.worldY - hs - 3, hs * 2 + 6, hs * 2 + 6);
-      ctx.shadowBlur = 0;
-    }
+  if(flashing && ((G.time * 6) | 0) % 2 === 0){
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#fff'; ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(h.worldX, h.worldY, hs + 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
   }
 
-  // 真·英雄/L4 外框金色描边（在白色描边外围）
+  // 真·英雄/L4 外层金色光圈
   if(isTrue){
     ctx.strokeStyle = '#fff080';
     ctx.lineWidth   = 3;
-    ctx.shadowColor = '#ffd700';
-    ctx.shadowBlur  = 8;
-    ctx.strokeRect(h.worldX - hs - 2, h.worldY - hs - 2, hs * 2 + 4, hs * 2 + 4);
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(h.worldX, h.worldY, hs + 2, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.shadowBlur = 0;
   } else if(isMax){
     ctx.strokeStyle = '#ffd700';
     ctx.lineWidth   = 2;
-    ctx.strokeRect(h.worldX - hs - 2, h.worldY - hs - 2, hs * 2 + 4, hs * 2 + 4);
+    ctx.beginPath();
+    ctx.arc(h.worldX, h.worldY, hs + 2, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
+  // 选中槽金边
   if(h.slotIdx === G.selectedSlot){
     ctx.strokeStyle = '#ffd700';
     ctx.lineWidth   = 2;
-    ctx.strokeRect(h.worldX - hs, h.worldY - hs, hs * 2, hs * 2);
-  }
-
-  // === 中央：单个汉字（角色姓 / 真·xx 显示"真"）===
-  ctx.fillStyle    = '#fff';
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'middle';
-  const heroName = (HERO_DEFS[h.heroId] && HERO_DEFS[h.heroId].name) || CLASS_NAME_CN[h.cls] || '?';
-  // 真英雄也用本名首字（之前固定显示"真"会丢失角色名识别）
-  const centerChar = heroName.charAt(0);
-  ctx.font = `bold ${Math.round(hs * 1.1)}px Arial`;
-  // 文字阴影增加可读性
-  ctx.shadowColor = 'rgba(0,0,0,0.7)';
-  ctx.shadowBlur = 2;
-  ctx.fillText(centerChar, h.worldX, h.worldY + 0.5);
-  ctx.shadowBlur = 0;
-  ctx.textBaseline = 'alphabetic';
-
-  // === 左上角小角标：等级标志位 — L1/L2/L3/L4 / "真"（真武将是等级序列的延续）===
-  {
-    const badgeR = 6;
-    const bx = h.worldX - hs + badgeR - 1;
-    const by = h.worldY - hs + badgeR - 1;
-    const goldFill = isTrue || isMax;
-    ctx.fillStyle = goldFill ? '#ffd700' : 'rgba(0,0,0,0.75)';
     ctx.beginPath();
-    ctx.arc(bx, by, badgeR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = isTrue ? '#fff080' : '#fff';
-    ctx.lineWidth = 1;
+    ctx.arc(h.worldX, h.worldY, hs + 0.5, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.fillStyle = goldFill ? '#3a2a08' : '#ffd700';
-    ctx.font = 'bold 8px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(isTrue ? '真' : String(h.lv), bx, by + 0.5);
-    ctx.textBaseline = 'alphabetic';
   }
 
-  // 蔡文姬增益指示
+  // 蔡文姬增益指示（仅保留粉圈，无数字）
   if(h.buffStacks > 0){
     ctx.strokeStyle = '#ff5fa2';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(h.worldX, h.worldY, hs + 3, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.fillStyle = '#ff5fa2';
-    ctx.font = 'bold 8px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(h.buffStacks, h.worldX + hs + 4, h.worldY - hs);
   }
 
-  // 张飞堆叠数字
+  // 张飞怒气：用弧形点阵代替数字（最多10点，排成半圆弧）
   if(h.cls === 'warrior' && h.rageStack > 0){
     const maxStack = 10 + (G.buffs.warriorRageMax || 0);
     const ratio = Math.min(1, h.rageStack / maxStack);
-    ctx.fillStyle = `rgb(255, ${Math.round(180 - 130 * ratio)}, ${Math.round(120 - 100 * ratio)})`;
-    ctx.font = h.rageStack >= maxStack ? 'bold 11px Arial' : 'bold 9px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = 'rgba(0,0,0,0.9)';
-    const sx = h.worldX, sy = h.worldY - hs - 9;
-    ctx.strokeText('×' + h.rageStack, sx, sy);
-    ctx.fillText('×' + h.rageStack, sx, sy);
+    const pipCount = Math.ceil(ratio * 10);
+    const pipR = Math.max(1.5, hs * 0.095);
+    const arcR = hs + 6;
+    const arcStart = -Math.PI * 0.82, arcEnd = -Math.PI * 0.18;
+    for (let i = 0; i < 10; i++) {
+      const t = i / 9;
+      const angle = arcStart + t * (arcEnd - arcStart);
+      const px = h.worldX + Math.cos(angle) * arcR;
+      const py = h.worldY + Math.sin(angle) * arcR;
+      ctx.fillStyle = i < pipCount
+        ? `rgb(255,${Math.round(180 - 130 * ratio)},${Math.round(120 - 100 * ratio)})`
+        : 'rgba(80,40,20,0.35)';
+      ctx.beginPath();
+      ctx.arc(px, py, pipR, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.textBaseline = 'alphabetic';
   ctx.globalAlpha = 1;
@@ -4679,7 +4973,7 @@ function drawHero(ctx, h){
 // ============================================================
 function separateHeroes(){
   const heroes   = G.heroes;
-  const MIN_DIST = 22;
+  const MIN_DIST = 30;
   for(let i = 0; i < heroes.length; i++){
     if(heroes[i].cls === 'gather') continue;
     for(let j = i + 1; j < heroes.length; j++){
@@ -4852,124 +5146,138 @@ function updateMonster(m, dt){
   }
 }
 function drawMonster(ctx, m){
-  const cols = ['#d95745', '#d8843a', '#7e5cc8', '#6f4bb8'];
   const isBoss = !!m.bossRole;
   const isElite = !!m.eliteRole && !isBoss;
   const r = isBoss ? 31 : (isElite ? 19 : 14);
   const x = m.pos.x, y = m.pos.y;
+  const t = G.time || 0;
+  const pulse = 0.5 + 0.5 * Math.sin(t * 2.6 + m.id);
+
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+
+  // ── 地面阴影 ────────────────────────────────────────────────────────────────
+  ctx.fillStyle = 'rgba(0,0,0,0.30)';
   ctx.beginPath();
-  ctx.ellipse(x, y + r * 0.75, r * (isBoss ? 1.22 : 0.9), r * (isBoss ? 0.42 : 0.35), 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y + r * 0.88, r * 0.80, r * 0.26, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  if(isBoss){
-    const pulse = 0.5 + 0.5 * Math.sin((G.time || 0) * 2.6 + m.id);
-    const auraGrad = ctx.createRadialGradient(x, y + r * 0.08, r * 0.4, x, y + r * 0.08, r * 1.7);
-    auraGrad.addColorStop(0, 'rgba(110,18,20,0.00)');
-    auraGrad.addColorStop(0.58, `rgba(120,18,20,${0.10 + pulse * 0.04})`);
-    auraGrad.addColorStop(1, 'rgba(25,8,10,0.00)');
-    ctx.fillStyle = auraGrad;
-    ctx.beginPath();
-    ctx.ellipse(x, y + r * 0.06, r * 1.62, r * 1.34, 0, 0, Math.PI * 2);
-    ctx.fill();
+  // ── 气场光晕 ─────────────────────────────────────────────────────────────────
+  const auraA = 0.15 + pulse * 0.08;
+  const auraC = isBoss ? `rgba(200,28,28,${auraA})` : isElite ? `rgba(130,60,240,${auraA})` : `rgba(40,70,220,${auraA})`;
+  ctx.fillStyle = auraC;
+  ctx.beginPath();
+  ctx.ellipse(x, y - r * 0.06, r * 1.38, r * 1.18, 0, 0, Math.PI * 2);
+  ctx.fill();
 
-    ctx.strokeStyle = `rgba(155,45,38,${0.34 + pulse * 0.10})`;
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    ctx.ellipse(x, y + r * 0.16, r * 1.18, r * 0.92, -0.08, Math.PI * 1.1, Math.PI * 1.9);
-    ctx.stroke();
-  }
-
+  // ── 狂热外圈 ─────────────────────────────────────────────────────────────────
   if(m.frenzy){
-    const pulse = 0.5 + 0.5 * Math.sin((G.time || 0) * 7 + m.id);
-    ctx.strokeStyle = `rgba(220,44,32,${isBoss ? 0.34 + pulse * 0.18 : 0.42 + pulse * 0.2})`;
+    const fp = 0.5 + 0.5 * Math.sin(t * 7 + m.id);
+    ctx.strokeStyle = `rgba(220,44,32,${isBoss ? 0.34 + fp * 0.18 : 0.42 + fp * 0.20})`;
     ctx.lineWidth = isBoss ? 3 : 2;
     ctx.beginPath();
-    ctx.arc(x, y, r + (isBoss ? 9 : 6) + pulse * 2, 0, Math.PI * 2);
+    ctx.arc(x, y, r + (isBoss ? 10 : 7) + fp * 2, 0, Math.PI * 2);
     ctx.stroke();
   }
 
-  if(isBoss){
-    ctx.shadowColor = 'rgba(130,28,24,0.62)';
-    ctx.shadowBlur = 14;
-  }
-  const grad = ctx.createRadialGradient(x - r * 0.3, y - r * 0.45, 3, x, y, r);
-  grad.addColorStop(0, isBoss ? '#7d3430' : (isElite ? '#a483ff' : '#ffb06a'));
-  grad.addColorStop(0.55, isBoss ? '#5f1f23' : (cols[m.lv - 1] || '#d95745'));
-  grad.addColorStop(1, isBoss ? '#18090b' : (isElite ? '#2b1845' : '#4a1010'));
-  ctx.fillStyle = grad;
+  // ── 主体 chibi 鬼灵圆球 ──────────────────────────────────────────────────────
+  const OL  = 'rgba(8,3,16,0.90)';
+  const OLW = Math.max(1.5, r * 0.12);
+  const bodyHi = isBoss ? '#6a1c24' : isElite ? '#4e1e90' : '#1a2278';
+  const bodyLo = isBoss ? '#20070c' : isElite ? '#140930' : '#080c30';
+
+  const bodyGrad = ctx.createRadialGradient(x - r * 0.28, y - r * 0.42, r * 0.08, x, y - r * 0.06, r * 0.98);
+  bodyGrad.addColorStop(0, bodyHi);
+  bodyGrad.addColorStop(1, bodyLo);
+  ctx.fillStyle = bodyGrad;
+  ctx.strokeStyle = OL;
+  ctx.lineWidth = OLW;
   ctx.beginPath();
-  ctx.moveTo(x, y - r);
-  ctx.quadraticCurveTo(x + r * (isBoss ? 1.05 : 0.95), y - r * 0.55, x + r * (isBoss ? 0.86 : 0.78), y + r * 0.32);
-  ctx.quadraticCurveTo(x + r * 0.38, y + r * (isBoss ? 1.02 : 0.95), x, y + r * (isBoss ? 0.78 : 0.72));
-  ctx.quadraticCurveTo(x - r * 0.38, y + r * (isBoss ? 1.02 : 0.95), x - r * (isBoss ? 0.86 : 0.78), y + r * 0.32);
-  ctx.quadraticCurveTo(x - r * (isBoss ? 1.05 : 0.95), y - r * 0.55, x, y - r);
+  ctx.arc(x, y - r * 0.06, r * 0.94, 0, Math.PI * 2);
+  ctx.fill(); ctx.stroke();
+
+  // 高光反光
+  const shine = ctx.createRadialGradient(x - r * 0.30, y - r * 0.48, 1, x, y - r * 0.06, r * 0.94);
+  shine.addColorStop(0, isBoss ? 'rgba(220,80,80,0.28)' : isElite ? 'rgba(180,140,255,0.28)' : 'rgba(120,160,255,0.28)');
+  shine.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = shine;
+  ctx.beginPath();
+  ctx.arc(x, y - r * 0.06, r * 0.94, 0, Math.PI * 2);
   ctx.fill();
-  ctx.shadowBlur = 0;
 
-  ctx.strokeStyle = isBoss ? '#b98a58' : (isElite ? '#d8c7ff' : 'rgba(255,255,255,0.85)');
-  ctx.lineWidth = isBoss ? 3 : (isElite ? 1.8 : 1.5);
-  ctx.stroke();
+  // ── 下摆鬼尾（3 个动态小球）─────────────────────────────────────────────────
+  const wR = r * 0.22;
+  ctx.strokeStyle = OL;
+  ctx.lineWidth = OLW * 0.55;
+  for(let wi = -1; wi <= 1; wi++){
+    const wx = x + wi * r * 0.44;
+    const wy = y + r * 0.72 + Math.sin(t * 2.8 + wi * 1.6 + m.id) * r * 0.09;
+    const wg = ctx.createRadialGradient(wx - wR * 0.25, wy - wR * 0.30, 1, wx, wy, wR * (wi === 0 ? 1.0 : 0.72));
+    wg.addColorStop(0, bodyHi);
+    wg.addColorStop(1, bodyLo);
+    ctx.fillStyle = wg;
+    ctx.beginPath();
+    ctx.arc(wx, wy, wR * (wi === 0 ? 1.0 : 0.72), 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+  }
 
+  // ── Boss：肩刺 + 皇冠 ────────────────────────────────────────────────────────
   if(isBoss){
-    ctx.strokeStyle = 'rgba(45,12,12,0.78)';
-    ctx.lineWidth = 3;
+    ctx.fillStyle = '#3c0e12'; ctx.strokeStyle = OL; ctx.lineWidth = OLW;
+    for(const sx of [-1, 1]){
+      ctx.beginPath();
+      ctx.moveTo(x + sx * r * 0.78, y + r * 0.10);
+      ctx.lineTo(x + sx * r * 1.24, y - r * 0.26);
+      ctx.lineTo(x + sx * r * 0.95, y + r * 0.34);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
+    const cg = ctx.createLinearGradient(x, y - r * 1.22, x, y - r * 0.60);
+    cg.addColorStop(0, '#e8c060'); cg.addColorStop(1, '#7a3820');
+    ctx.fillStyle = cg; ctx.strokeStyle = '#2c1008'; ctx.lineWidth = 1.8;
     ctx.beginPath();
-    ctx.moveTo(x - r * 0.86, y - r * 0.04);
-    ctx.lineTo(x - r * 1.14, y - r * 0.28);
-    ctx.moveTo(x + r * 0.86, y - r * 0.04);
-    ctx.lineTo(x + r * 1.14, y - r * 0.28);
-    ctx.stroke();
-
-    const crownGrad = ctx.createLinearGradient(x, y - r * 1.18, x, y - r * 0.58);
-    crownGrad.addColorStop(0, '#e0b46a');
-    crownGrad.addColorStop(1, '#7b4826');
-    ctx.fillStyle = crownGrad;
-    ctx.beginPath();
-    ctx.moveTo(x - r * 0.56, y - r * 0.78);
-    ctx.lineTo(x - r * 0.24, y - r * 1.03);
-    ctx.lineTo(x, y - r * 0.84);
-    ctx.lineTo(x + r * 0.24, y - r * 1.03);
-    ctx.lineTo(x + r * 0.56, y - r * 0.78);
-    ctx.lineTo(x + r * 0.38, y - r * 0.60);
-    ctx.lineTo(x - r * 0.38, y - r * 0.60);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = '#2c1208';
-    ctx.lineWidth = 1.6;
-    ctx.stroke();
+    ctx.moveTo(x - r * 0.52, y - r * 0.80);
+    ctx.lineTo(x - r * 0.22, y - r * 1.12); ctx.lineTo(x, y - r * 0.88);
+    ctx.lineTo(x + r * 0.22, y - r * 1.12); ctx.lineTo(x + r * 0.52, y - r * 0.80);
+    ctx.lineTo(x + r * 0.36, y - r * 0.62); ctx.lineTo(x - r * 0.36, y - r * 0.62);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
   } else if(isElite){
-    ctx.strokeStyle = 'rgba(216,199,255,0.75)';
-    ctx.lineWidth = 1.4;
+    // 精英：单角
+    ctx.fillStyle = '#8844cc'; ctx.strokeStyle = OL; ctx.lineWidth = OLW * 0.80;
     ctx.beginPath();
-    ctx.arc(x, y, r + 3, Math.PI * 1.08, Math.PI * 1.92);
-    ctx.stroke();
+    ctx.moveTo(x - r * 0.16, y - r * 0.98);
+    ctx.lineTo(x, y - r * 1.38);
+    ctx.lineTo(x + r * 0.16, y - r * 0.98);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  } else {
+    // 普通：等级点阵（右上角 lv 个蓝点）
+    const dR = Math.max(1.5, r * 0.15);
+    ctx.fillStyle = '#88aaff';
+    for(let di = 0; di < m.lv; di++){
+      ctx.beginPath();
+      ctx.arc(x + r * 0.52 + di * dR * 2.6, y - r * 0.85, dR, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
-  ctx.fillStyle = '#fff';
+  // ── 眼睛 ──────────────────────────────────────────────────────────────────
+  const eR  = Math.max(1.8, r * 0.160);
+  const eY  = y - r * 0.12;
+  const eX  = r * 0.300;
+  ctx.fillStyle = isBoss ? '#ffcccc' : isElite ? '#e0d0ff' : '#c8dcff';
   ctx.beginPath();
-  ctx.arc(x - r * 0.28, y - r * 0.12, isBoss ? 3.1 : (isElite ? 2.6 : 2.2), 0, Math.PI * 2);
-  ctx.arc(x + r * 0.28, y - r * 0.12, isBoss ? 3.1 : (isElite ? 2.6 : 2.2), 0, Math.PI * 2);
+  ctx.arc(x - eX, eY, eR, 0, Math.PI * 2);
+  ctx.arc(x + eX, eY, eR, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#111';
+  ctx.fillStyle = isBoss ? '#cc1010' : '#060418';
   ctx.beginPath();
-  ctx.arc(x - r * 0.28, y - r * 0.12, isBoss ? 1.45 : 1, 0, Math.PI * 2);
-  ctx.arc(x + r * 0.28, y - r * 0.12, isBoss ? 1.45 : 1, 0, Math.PI * 2);
+  ctx.arc(x - eX + eR * 0.18, eY, eR * 0.50, 0, Math.PI * 2);
+  ctx.arc(x + eX + eR * 0.18, eY, eR * 0.50, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = '#fff';
-  ctx.font = isBoss ? 'bold 10px Arial' : (isElite ? 'bold 9px Arial' : 'bold 9px Arial');
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.strokeStyle = 'rgba(0,0,0,0.72)';
-  ctx.lineWidth = 2;
-  const label = isBoss ? '首' : (isElite ? '精' : m.lv);
-  ctx.strokeText(label, x, y + r * 0.26);
-  ctx.fillText(label, x, y + r * 0.26);
-  ctx.textBaseline = 'alphabetic';
   ctx.restore();
 
-  drawHPBar(ctx, x, y - r - 8, isBoss ? 58 : (isElite ? 44 : 32), isBoss ? 6 : 5, m.hp, m.maxHp, '#2ecc71', '#e74c3c');
+  drawHPBar(ctx, x, y - r - 8, isBoss ? 58 : (isElite ? 44 : 32), isBoss ? 6 : 5,
+            m.hp, m.maxHp, '#2ecc71', '#e74c3c');
 
   // 周瑜燃身：头顶火焰 + 描边发热
   if(m.zhouyuBurn && m.zhouyuBurn.until > G.time){
@@ -5233,7 +5541,7 @@ function updateProjectiles(dt){
           });
           spawnParticleBurst(hitTarget.pos.x, hitTarget.pos.y, '#ff8c00', 16);
           triggerShake(3, 0.1);
-          sfx('explode');
+          sfx('huangzhong_burst');
         }
         G.projectiles.splice(i, 1);
         continue;
@@ -5679,6 +5987,7 @@ function updateSupportAura(dt){
     });
     // 蔡文姬扰乱跳字
     spawnSkillPopup(sup.worldX, sup.worldY - 24, '扰乱', CLASS_COLOR.support);
+    sfx('caiwenji_aura');
 
     // 该辅助的下次CD
     sup.auraCD = 10 / (1 + (G.buffs.supSlow || 0) * 0.15);
@@ -5941,6 +6250,7 @@ function fireTurretArrow(t, target){
     dmg,
     turretRef: t
   });
+  sfx('turret_fire');
 }
 
 function explodeTurret(t){
@@ -6827,17 +7137,34 @@ function gameLoop(t){
       const baseGold = [5, 8, 12, 150][m.lv - 1];
       const goldMult = (G.levelConfig && G.levelConfig.affix && G.levelConfig.affix.goldMult) || 1;
       G.gold += baseGold * goldMult;
-      // 死亡粒子
+      // 死亡粒子（分级：小怪小爆 / 精英中爆 / BOSS 大爆）
       const cols = ['#e74c3c', '#e67e22', '#9b59b6', '#8e6bd8'];
-      spawnParticleBurst(m.pos.x, m.pos.y, cols[m.lv - 1], m.bossRole ? 18 : (m.eliteRole ? 12 : 8));
-      // 真正首领触发首领反馈；精英奖励波清完精英也会掉宝箱
+      const baseCol = cols[m.lv - 1];
       if(m.bossRole){
-        triggerShake(5, 0.22);
+        // BOSS：双层粒子 + 金色火花 + 冲击波 + 强震屏 + 红屏闪
+        spawnParticleBurst(m.pos.x, m.pos.y, baseCol, 30);
+        spawnParticleBurst(m.pos.x, m.pos.y, '#ffeb80', 18);
+        spawnParticleBurst(m.pos.x, m.pos.y, '#fff', 10);
+        G.explosionEffects = G.explosionEffects || [];
+        G.explosionEffects.push({ x: m.pos.x, y: m.pos.y, radius: 70, until: G.time + 0.45, color: '#ff8030' });
+        G.explosionEffects.push({ x: m.pos.x, y: m.pos.y, radius: 110, until: G.time + 0.55, color: '#ffd700' });
+        triggerShake(7, 0.35);
+        triggerScreenFlash(0.35, '255, 170, 60', 0.30);
         sfx('boss_kill');
         handleMajorRewardKill(m);
+      } else if(m.eliteRole){
+        // 精英：中粒子 + 金火花 + 小冲击波 + 轻震屏
+        spawnParticleBurst(m.pos.x, m.pos.y, baseCol, 14);
+        spawnParticleBurst(m.pos.x, m.pos.y, '#ffd58a', 8);
+        G.explosionEffects = G.explosionEffects || [];
+        G.explosionEffects.push({ x: m.pos.x, y: m.pos.y, radius: 36, until: G.time + 0.28, color: '#ffaa50' });
+        triggerShake(2.4, 0.14);
+        sfx('kill_mid');
+        handleMajorRewardKill(m);
       } else {
+        // 小怪：小粒子
+        spawnParticleBurst(m.pos.x, m.pos.y, baseCol, 6);
         sfx('kill');
-        if(m.eliteRole) handleMajorRewardKill(m);
       }
       G.monsters.splice(i, 1);
     }
@@ -6917,6 +7244,7 @@ function render(){
     ctx.fillRect(0, 0, CW, CH);
   }
   drawFrenzyScreenEdge(ctx);
+  drawFortressDangerEdge(ctx);
   drawBossAmbushCountdown(ctx);
   drawFrenzyCountdown(ctx);
 }
@@ -6986,6 +7314,10 @@ function drawFrenzyCountdown(ctx){
   const remain = info.t - G.time;
   if(remain <= 0 || remain > 5) return;
   const count = Math.max(1, Math.ceil(remain));
+  if(G._lastFrenzyTick !== count){
+    G._lastFrenzyTick = count;
+    if(count <= 2) sfx('tick_final'); else sfx('tick_warn');
+  }
   const pulse = 0.5 + 0.5 * Math.sin((G.time || 0) * 6);
   const y = Math.max(92, CH * 0.20);
   ctx.save();
@@ -7004,6 +7336,10 @@ function drawBossAmbushCountdown(ctx){
   const remain = info.t - G.time;
   if(remain <= 0 || remain > 3) return;
   const count = Math.max(1, Math.ceil(remain));
+  if(G._lastBossTick !== count){
+    G._lastBossTick = count;
+    if(count <= 2) sfx('tick_final'); else sfx('tick_warn');
+  }
   const pulse = 0.5 + 0.5 * Math.sin((G.time || 0) * 7);
   const y = Math.max(88, CH * 0.20);
   ctx.save();
@@ -7064,68 +7400,672 @@ function drawFrenzyScreenEdge(ctx){
   ctx.restore();
 }
 
+// 主堡 HP < 30% 红边脉冲（与狂热边框区分：颜色更深、节奏更急、稳定四边）
+function drawFortressDangerEdge(ctx){
+  const f = G.fortress;
+  if(!f || !G.running) return;
+  const ratio = f.hp / f.maxHp;
+  if(ratio >= 0.30 || f.hp <= 0) return;
+  // 进入 30% 后呼吸频率随血量降低加快
+  const sev = Math.max(0, Math.min(1, (0.30 - ratio) / 0.30));
+  const speed = 4 + sev * 6;
+  const pulse = 0.5 + 0.5 * Math.sin((G.time || 0) * speed);
+  const alpha = 0.18 + pulse * 0.18 + sev * 0.10;
+  const edge = Math.max(50, Math.min(CW, CH) * 0.13);
+  ctx.save();
+  // 红色四边渐变（更暗的血红：rgb(180, 12, 18)）
+  let g = ctx.createLinearGradient(0, 0, edge, 0);
+  g.addColorStop(0, `rgba(180, 12, 18, ${alpha})`);
+  g.addColorStop(1, 'rgba(180, 12, 18, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, edge, CH);
+  g = ctx.createLinearGradient(CW, 0, CW - edge, 0);
+  g.addColorStop(0, `rgba(180, 12, 18, ${alpha})`);
+  g.addColorStop(1, 'rgba(180, 12, 18, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(CW - edge, 0, edge, CH);
+  g = ctx.createLinearGradient(0, 0, 0, edge);
+  g.addColorStop(0, `rgba(180, 12, 18, ${alpha})`);
+  g.addColorStop(1, 'rgba(180, 12, 18, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, CW, edge);
+  g = ctx.createLinearGradient(0, CH, 0, CH - edge);
+  g.addColorStop(0, `rgba(180, 12, 18, ${alpha + 0.06})`);
+  g.addColorStop(1, 'rgba(180, 12, 18, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, CH - edge, CW, edge);
+  // 边框：暗血红，比狂热的橙红更"危急"
+  ctx.lineWidth = 4 + pulse * 3 + sev * 2;
+  ctx.strokeStyle = `rgba(220, 30, 30, ${0.40 + pulse * 0.30})`;
+  ctx.strokeRect(3, 3, CW - 6, CH - 6);
+  ctx.restore();
+}
+
 // === Web Audio 音效（无需外部文件）===
 let _audioCtx = null;
+let _masterGain = null;
+let _sfxGain = null;
+let _bgmGain = null;
+// 音量：0..1；默认 0.7 SFX / 0.5 BGM；mute 持久化
+const AUDIO_PREFS = (function(){
+  let p = { sfx: 0.7, bgm: 0.5, mute: false };
+  try {
+    const raw = localStorage.getItem('bf_audio');
+    if(raw){
+      const o = JSON.parse(raw);
+      if(o && typeof o === 'object'){
+        if(typeof o.sfx === 'number') p.sfx = Math.max(0, Math.min(1, o.sfx));
+        if(typeof o.bgm === 'number') p.bgm = Math.max(0, Math.min(1, o.bgm));
+        if(typeof o.mute === 'boolean') p.mute = o.mute;
+      }
+    }
+  } catch(e){}
+  return p;
+})();
+function saveAudioPrefs(){
+  try { localStorage.setItem('bf_audio', JSON.stringify(AUDIO_PREFS)); } catch(e){}
+}
 function getAudioCtx(){
   if(!_audioCtx){
-    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    try {
+      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      _masterGain = _audioCtx.createGain();
+      _sfxGain = _audioCtx.createGain();
+      _bgmGain = _audioCtx.createGain();
+      _sfxGain.connect(_masterGain);
+      _bgmGain.connect(_masterGain);
+      _masterGain.connect(_audioCtx.destination);
+      applyAudioPrefs();
+    }
     catch(e){ return null; }
   }
   return _audioCtx;
 }
-function playTone(freq, duration, type, volume, slideTo){
+function applyAudioPrefs(){
+  if(!_audioCtx) return;
+  const t = _audioCtx.currentTime;
+  _masterGain.gain.setTargetAtTime(AUDIO_PREFS.mute ? 0 : 1, t, 0.02);
+  _sfxGain.gain.setTargetAtTime(AUDIO_PREFS.sfx, t, 0.02);
+  _bgmGain.gain.setTargetAtTime(AUDIO_PREFS.bgm, t, 0.02);
+}
+function setMute(on){
+  AUDIO_PREFS.mute = !!on;
+  saveAudioPrefs();
+  applyAudioPrefs();
+  const el = document.getElementById('mute-btn');
+  if(el) el.textContent = AUDIO_PREFS.mute ? '🔇' : '🔊';
+}
+function toggleMute(){ setMute(!AUDIO_PREFS.mute); }
+window.toggleMute = toggleMute;
+
+// 单音 helper
+function playTone(freq, duration, type, volume, slideTo, busName){
   const ctx = getAudioCtx();
   if(!ctx) return;
+  const bus = busName === 'bgm' ? _bgmGain : _sfxGain;
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = type || 'sine';
   osc.frequency.setValueAtTime(freq, ctx.currentTime);
   if(slideTo){
-    osc.frequency.exponentialRampToValueAtTime(slideTo, ctx.currentTime + duration);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, slideTo), ctx.currentTime + duration);
   }
-  gain.gain.setValueAtTime(volume || 0.15, ctx.currentTime);
+  gain.gain.setValueAtTime(Math.max(0.0001, volume || 0.15), ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(bus);
   osc.start();
-  osc.stop(ctx.currentTime + duration);
+  osc.stop(ctx.currentTime + duration + 0.05);
 }
+// 白噪声 helper（爆破/冲击 / 风声）
+function playNoise(duration, volume, hpFreq, bandFreq, decay){
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  const bufLen = Math.ceil(ctx.sampleRate * duration);
+  const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+  const ch = buf.getChannelData(0);
+  for(let i = 0; i < bufLen; i++){
+    ch[i] = (Math.random() * 2 - 1);
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const gain = ctx.createGain();
+  const t0 = ctx.currentTime;
+  gain.gain.setValueAtTime(Math.max(0.0001, volume || 0.15), t0);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + (decay || duration));
+  let node = src;
+  if(hpFreq){
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = hpFreq;
+    node.connect(hp);
+    node = hp;
+  }
+  if(bandFreq){
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = bandFreq;
+    bp.Q.value = 1.2;
+    node.connect(bp);
+    node = bp;
+  }
+  node.connect(gain).connect(_sfxGain);
+  src.start();
+  src.stop(t0 + duration + 0.05);
+}
+function _seq(arr){
+  // [[freq, dur, type, vol, slide, delay], ...]
+  arr.forEach(s => {
+    const [f, d, t, v, sl, dl] = s;
+    if(dl) setTimeout(() => playTone(f, d, t || 'sine', v == null ? 0.15 : v, sl), dl);
+    else playTone(f, d, t || 'sine', v == null ? 0.15 : v, sl);
+  });
+}
+
+// 节流：同帧/极短间隔的同名音效合并，防止"许褚连冲 / 燃身 tick"刷成轰鸣
+const _sfxThrottle = {};
+function _shouldThrottle(name, ms){
+  const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  const last = _sfxThrottle[name] || 0;
+  if(now - last < ms) return true;
+  _sfxThrottle[name] = now;
+  return false;
+}
+
 function sfx(name){
   switch(name){
-    case 'hit': playTone(180, 0.06, 'square', 0.05); break;
-    case 'crit': playTone(420, 0.12, 'square', 0.10, 200); break;
-    case 'kill': playTone(120, 0.20, 'sawtooth', 0.10, 60); break;
+    // ---- 基础战斗 ----
+    case 'hit':
+      if(_shouldThrottle('hit', 28)) return;
+      playTone(180, 0.05, 'square', 0.05);
+      break;
+    case 'crit':
+      if(_shouldThrottle('crit', 40)) return;
+      playTone(520, 0.10, 'square', 0.10, 220);
+      playNoise(0.06, 0.06, 800, 1800, 0.05);
+      break;
+    case 'kill':
+      if(_shouldThrottle('kill', 35)) return;
+      playTone(120, 0.16, 'sawtooth', 0.09, 60);
+      playNoise(0.08, 0.05, 200, 400, 0.07);
+      break;
+    case 'kill_mid':  // 精英怪击杀
+      if(_shouldThrottle('kill_mid', 60)) return;
+      playTone(95, 0.22, 'sawtooth', 0.13, 45);
+      playNoise(0.16, 0.10, 200, 500, 0.14);
+      setTimeout(() => playTone(170, 0.10, 'square', 0.08, 90), 50);
+      break;
     case 'boss_kill':
-      playTone(80, 0.4, 'sawtooth', 0.18, 40);
-      setTimeout(() => playTone(60, 0.5, 'sine', 0.15, 30), 120);
+      playTone(70, 0.5, 'sawtooth', 0.20, 35);
+      playNoise(0.5, 0.18, 80, 220, 0.45);
+      setTimeout(() => playTone(55, 0.6, 'sine', 0.16, 28), 120);
+      setTimeout(() => playNoise(0.30, 0.12, 60, 160, 0.25), 200);
+      setTimeout(() => playTone(880, 0.18, 'sine', 0.10, 1320), 280);
       break;
-    case 'merge': playTone(440, 0.08, 'sine', 0.12, 880); break;
-    case 'maxlv':
-      playTone(523, 0.1, 'sine', 0.15);
-      setTimeout(() => playTone(659, 0.1, 'sine', 0.15), 80);
-      setTimeout(() => playTone(784, 0.18, 'sine', 0.18), 160);
+    case 'fortress_hit':
+      if(_shouldThrottle('fortress_hit', 80)) return;
+      playTone(72, 0.14, 'square', 0.18, 40);
+      playNoise(0.10, 0.10, 100, 220, 0.08);
       break;
+    // ---- 系统 ----
     case 'summon': playTone(330, 0.12, 'triangle', 0.10, 660); break;
+    case 'merge':
+      playTone(440, 0.06, 'sine', 0.10, 880);
+      setTimeout(() => playTone(660, 0.08, 'sine', 0.10, 1100), 40);
+      break;
     case 'upgrade': playTone(550, 0.08, 'sine', 0.10, 880); break;
-    case 'thunder': playTone(80, 0.3, 'sawtooth', 0.18, 30); break;
-    case 'explode':
-      playTone(150, 0.15, 'sawtooth', 0.18, 60);
+    case 'maxlv':
+      _seq([
+        [523, 0.10, 'sine', 0.15, null, 0],
+        [659, 0.10, 'sine', 0.15, null, 80],
+        [784, 0.18, 'sine', 0.18, null, 160],
+        [1047, 0.22, 'sine', 0.18, null, 260],
+      ]);
+      break;
+    case 'true_hero': // 真武将出场仪式
+      _seq([
+        [392, 0.18, 'sine', 0.18, null, 0],
+        [523, 0.18, 'sine', 0.18, null, 130],
+        [659, 0.22, 'sine', 0.20, null, 260],
+        [880, 0.40, 'sine', 0.22, 1320, 420],
+      ]);
+      setTimeout(() => playNoise(0.5, 0.10, 600, 2000, 0.45), 420);
+      break;
+    case 'chest_open':
+      _seq([
+        [659, 0.10, 'sine', 0.15, null, 0],
+        [880, 0.12, 'sine', 0.16, null, 80],
+        [1175, 0.20, 'sine', 0.18, 1568, 180],
+      ]);
+      break;
+    case 'click': playTone(880, 0.04, 'square', 0.05); break;
+    case 'click_ok':   // 通用有效点击（保底）
+      if(_shouldThrottle('click_ok', 40)) return;
+      playTone(660, 0.05, 'triangle', 0.07, 990);
+      break;
+    case 'click_deny': // 通用无效点击（保底）— 短促低沉双音
+      if(_shouldThrottle('click_deny', 80)) return;
+      playTone(220, 0.06, 'square', 0.07, 160);
+      setTimeout(() => playTone(165, 0.05, 'square', 0.05, 120), 35);
+      break;
+    case 'tab':   playTone(660, 0.03, 'triangle', 0.05); break;
+    case 'melee_hit': // 近战劈砍（用于 normal 单体近战命中）
+      if(_shouldThrottle('melee_hit', 35)) return;
+      playTone(280, 0.05, 'square', 0.06, 140);
+      playNoise(0.08, 0.06, 600, 1400, 0.07);
+      break;
+    case 'tick_warn':  // 倒计时常规嘀（5/4/3）
+      if(_shouldThrottle('tick_warn', 200)) return;
+      playTone(880, 0.06, 'sine', 0.10, 760);
+      break;
+    case 'tick_final': // 倒计时最后两秒（2/1）— 更高更急
+      if(_shouldThrottle('tick_final', 200)) return;
+      playTone(1320, 0.08, 'sine', 0.13, 1100);
+      playNoise(0.06, 0.06, 1500, 2800, 0.05);
+      break;
+    // ---- 仪式 stingers ----
+    case 'banner_battle':
+      _seq([
+        [262, 0.16, 'square', 0.15, null, 0],
+        [392, 0.16, 'square', 0.16, null, 110],
+        [523, 0.30, 'square', 0.18, null, 220],
+      ]);
+      playNoise(0.30, 0.10, 200, 800, 0.28);
+      break;
+    case 'banner_victory':
+      _seq([
+        [523, 0.16, 'sine', 0.18, null, 0],
+        [659, 0.16, 'sine', 0.18, null, 110],
+        [784, 0.18, 'sine', 0.20, null, 220],
+        [1047, 0.35, 'sine', 0.22, 1568, 350],
+      ]);
+      break;
+    case 'banner_defeat':
+      _seq([
+        [330, 0.30, 'sawtooth', 0.18, 220, 0],
+        [247, 0.40, 'sawtooth', 0.18, 165, 200],
+        [165, 0.60, 'sawtooth', 0.20, 110, 450],
+      ]);
+      playNoise(0.6, 0.14, 80, 300, 0.55);
+      break;
+    case 'banner_boss':
+      _seq([
+        [82, 0.45, 'sawtooth', 0.20, 55, 0],
+        [110, 0.30, 'sawtooth', 0.16, 82, 200],
+        [82, 0.45, 'sawtooth', 0.20, 55, 400],
+      ]);
+      playNoise(0.45, 0.12, 60, 200, 0.40);
+      break;
+    case 'win':
+      _seq([
+        [523, 0.18, 'sine', 0.18, null, 0],
+        [659, 0.18, 'sine', 0.18, null, 100],
+        [784, 0.18, 'sine', 0.18, null, 200],
+        [1047, 0.40, 'sine', 0.22, null, 300],
+      ]);
+      break;
+    case 'lose': playTone(220, 0.5, 'sawtooth', 0.20, 80); break;
+    // ---- 英雄技能 ----
+    case 'thunder': // 张角雷云
+      playTone(80, 0.25, 'sawtooth', 0.16, 30);
+      playNoise(0.30, 0.18, 1500, 3000, 0.28);
+      setTimeout(() => playTone(60, 0.18, 'sawtooth', 0.10, 25), 70);
+      break;
+    case 'burn':    // 周瑜燃身 tick
+      if(_shouldThrottle('burn', 70)) return;
+      playTone(720, 0.06, 'triangle', 0.06, 480);
+      playNoise(0.08, 0.04, 1500, 2400, 0.07);
+      break;
+    case 'mark':    // 郭嘉标记
+      if(_shouldThrottle('mark', 80)) return;
+      playTone(740, 0.05, 'sine', 0.05, 980);
+      break;
+    case 'explode': // 郭嘉引爆 / 黄忠爆头 / 通用爆裂
+      if(_shouldThrottle('explode', 60)) return;
+      playTone(140, 0.16, 'sawtooth', 0.18, 55);
+      playNoise(0.18, 0.14, 200, 600, 0.16);
+      break;
+    case 'guojia_blackhole':  // 真郭嘉黑洞
+      playTone(50, 0.4, 'sine', 0.15, 30);
+      playTone(110, 0.4, 'sawtooth', 0.10, 60);
+      setTimeout(() => playNoise(0.30, 0.10, 80, 200, 0.28), 80);
+      break;
+    case 'huangzhong_burst': // 黄忠爆裂
+      if(_shouldThrottle('huangzhong_burst', 50)) return;
+      playTone(380, 0.08, 'triangle', 0.10, 720);
+      playNoise(0.14, 0.12, 600, 1200, 0.12);
+      break;
+    case 'arrow_bounce':     // 太史慈弹射
+      if(_shouldThrottle('arrow_bounce', 40)) return;
+      playTone(880, 0.05, 'triangle', 0.08, 1320);
+      break;
+    case 'arrow_volley':     // 夏侯渊连射
+      if(_shouldThrottle('arrow_volley', 50)) return;
+      playTone(660, 0.05, 'triangle', 0.07, 990);
+      setTimeout(() => playTone(720, 0.04, 'triangle', 0.06, 1080), 30);
+      break;
+    case 'zhangfei_fury':    // 张飞满层狂怒
+      _seq([
+        [110, 0.18, 'sawtooth', 0.18, 80, 0],
+        [165, 0.18, 'sawtooth', 0.18, 110, 120],
+        [220, 0.30, 'sawtooth', 0.20, 165, 240],
+      ]);
+      playNoise(0.30, 0.15, 200, 600, 0.28);
+      break;
+    case 'lvbu_sweep':       // 吕布扫击
+      if(_shouldThrottle('lvbu_sweep', 80)) return;
+      playTone(220, 0.10, 'sawtooth', 0.14, 110);
+      playNoise(0.16, 0.16, 400, 1000, 0.14);
+      break;
+    case 'lvbu_fengxian':    // 吕奉先狂暴态触发
+      _seq([
+        [392, 0.10, 'square', 0.16, null, 0],
+        [659, 0.12, 'square', 0.18, null, 80],
+        [880, 0.18, 'square', 0.20, 1175, 180],
+      ]);
+      break;
+    case 'xuchu_charge':     // 许褚冲杀
+      if(_shouldThrottle('xuchu_charge', 60)) return;
+      playTone(140, 0.10, 'square', 0.14, 70);
+      playNoise(0.14, 0.14, 200, 700, 0.12);
+      break;
+    case 'zhao_chain':       // 赵云闪电链
+      if(_shouldThrottle('zhao_chain', 50)) return;
+      playTone(660, 0.06, 'square', 0.10, 1320);
+      playNoise(0.08, 0.10, 1800, 3000, 0.07);
+      break;
+    case 'zhangliao_teleport': // 张辽瞬移
+      if(_shouldThrottle('zhangliao_teleport', 80)) return;
+      playTone(880, 0.08, 'sine', 0.10, 440);
+      playNoise(0.10, 0.10, 1500, 2500, 0.09);
+      setTimeout(() => playTone(440, 0.08, 'square', 0.12, 220), 50);
+      break;
+    case 'zhangliao_fame':   // 威名（全场减速）
+      _seq([
+        [220, 0.18, 'sawtooth', 0.16, 165, 0],
+        [165, 0.30, 'sawtooth', 0.16, 110, 100],
+      ]);
+      break;
+    case 'lvmeng_stealth_in':  // 进入潜行
+      playTone(440, 0.10, 'sine', 0.08, 220);
+      playNoise(0.16, 0.06, 600, 2000, 0.14);
+      break;
+    case 'lvmeng_surge':     // 白衣突袭
+      playTone(220, 0.08, 'square', 0.12, 660);
+      playNoise(0.16, 0.14, 400, 1200, 0.14);
+      setTimeout(() => playTone(880, 0.10, 'triangle', 0.10, 440), 50);
+      break;
+    case 'charm':            // 貂蝉魅惑
+      if(_shouldThrottle('charm', 100)) return;
+      _seq([
+        [660, 0.10, 'sine', 0.10, 880, 0],
+        [990, 0.14, 'sine', 0.10, 660, 80],
+      ]);
+      break;
+    case 'caiwenji_aura':    // 蔡文姬群体增益
+      _seq([
+        [523, 0.12, 'sine', 0.12, null, 0],
+        [659, 0.14, 'sine', 0.12, null, 80],
+        [784, 0.18, 'sine', 0.14, null, 160],
+      ]);
+      break;
+    case 'xunyu_crown':      // 荀彧加冕
+      _seq([
+        [523, 0.10, 'triangle', 0.12, null, 0],
+        [784, 0.12, 'triangle', 0.13, null, 80],
+        [1047, 0.18, 'triangle', 0.15, 1568, 160],
+      ]);
+      break;
+    case 'lord_pulse':       // 主公脉冲
+      if(_shouldThrottle('lord_pulse', 80)) return;
+      playTone(180, 0.08, 'sine', 0.10, 90);
+      playNoise(0.10, 0.10, 200, 600, 0.09);
+      break;
+    case 'turret_fire':      // 月英炮台发射
+      if(_shouldThrottle('turret_fire', 60)) return;
+      playTone(280, 0.06, 'square', 0.07, 140);
+      break;
+    case 'lusu_return':      // 鲁肃返堡军粮
+      _seq([
+        [660, 0.10, 'triangle', 0.10, null, 0],
+        [880, 0.12, 'triangle', 0.12, null, 70],
+      ]);
+      break;
+    case 'dengai_miner':     // 邓艾矿工
+      playTone(440, 0.10, 'triangle', 0.10, 660);
+      break;
+    case 'slot_unlock':      // 槽位解锁
+      _seq([
+        [523, 0.10, 'sine', 0.12, null, 0],
+        [784, 0.14, 'sine', 0.14, null, 90],
+      ]);
       break;
     case 'frenzy':
       playTone(110, 0.18, 'sawtooth', 0.18, 55);
       setTimeout(() => playTone(180, 0.16, 'square', 0.12, 90), 90);
+      playNoise(0.24, 0.10, 100, 300, 0.22);
       break;
-    case 'fortress_hit': playTone(80, 0.15, 'square', 0.18, 40); break;
-    case 'win': {
-      const c = getAudioCtx();
-      if(!c) return;
-      [523, 659, 784, 1047].forEach((f, i) => {
-        setTimeout(() => playTone(f, 0.18, 'sine', 0.18), i * 100);
-      });
-      break;
-    }
-    case 'lose': playTone(220, 0.5, 'sawtooth', 0.20, 80); break;
   }
 }
+window.sfx = sfx;
+
+// ============================================================
+//  BGM：单轨循环合成（菜单曲 / 战斗曲）
+// ============================================================
+const BGM_TRACKS = {
+  menu: {
+    // 平稳古风调，五声音阶 D 商，节奏 90 BPM；4 小节循环
+    bpm: 90,
+    // 每拍 = 60/90 ≈ 0.667s；4 拍/小节 × 4 小节 = 16 拍 ≈ 10.67s
+    bars: 4, beatsPerBar: 4,
+    // 旋律（音高=频率Hz，时长=拍数）
+    melody: [
+      [294,1],[349,1],[440,1],[349,1],   // D F A F
+      [294,1],[262,1],[294,2],            // D C D _
+      [349,1],[440,1],[523,1],[440,1],   // F A C5 A
+      [349,1],[294,1],[262,2],            // F D C _
+    ],
+    bass:   [[147,4],[196,4],[175,4],[147,4]], // 每小节一根
+    melodyWave: 'triangle', bassWave: 'sine',
+    melodyVol: 0.10, bassVol: 0.10,
+  },
+  battle: {
+    // 节奏推进，鼓点+短促 motif，A 小调；110 BPM
+    bpm: 110,
+    bars: 4, beatsPerBar: 4,
+    // 旋律走"A C E A 下行+上行" 紧张感
+    melody: [
+      [440,0.5],[523,0.5],[659,0.5],[523,0.5],[440,1],[523,1],
+      [392,0.5],[440,0.5],[523,0.5],[440,0.5],[392,1],[440,1],
+      [523,0.5],[659,0.5],[784,0.5],[659,0.5],[523,1],[440,1],
+      [392,0.5],[440,0.5],[523,0.5],[440,0.5],[330,2],
+    ],
+    bass:   [[110,2],[165,2],[98,2],[147,2],[110,2],[165,2],[82,2],[110,2]],
+    melodyWave: 'square', bassWave: 'sawtooth',
+    melodyVol: 0.08, bassVol: 0.09,
+    // 每拍打一次"鼓点"（噪声）
+    drum: true,
+  },
+};
+let _bgmState = { name: null, loopTimer: null, nodes: [], stopAt: 0 };
+function stopBGM(){
+  if(_bgmState.loopTimer){
+    clearTimeout(_bgmState.loopTimer);
+    _bgmState.loopTimer = null;
+  }
+  const ctx = getAudioCtx();
+  if(ctx){
+    const t = ctx.currentTime;
+    for(const n of _bgmState.nodes){
+      try {
+        if(n.gain){ n.gain.gain.cancelScheduledValues(t); n.gain.gain.setTargetAtTime(0.0001, t, 0.05); }
+        if(n.src && n.src.stop){ try { n.src.stop(t + 0.3); } catch(e){} }
+      } catch(e){}
+    }
+  }
+  _bgmState.nodes = [];
+  _bgmState.name = null;
+}
+function _scheduleBGMNote(ctx, freq, startAt, dur, wave, vol, busGain){
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = wave;
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, startAt);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0001, vol), startAt + 0.02);
+  g.gain.setValueAtTime(Math.max(0.0001, vol), startAt + Math.max(0.04, dur - 0.06));
+  g.gain.exponentialRampToValueAtTime(0.0001, startAt + dur);
+  osc.connect(g).connect(busGain);
+  osc.start(startAt);
+  osc.stop(startAt + dur + 0.05);
+  _bgmState.nodes.push({ src: osc, gain: g });
+}
+function _scheduleBGMDrum(ctx, startAt, dur, busGain){
+  const bufLen = Math.ceil(ctx.sampleRate * dur);
+  const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+  const ch = buf.getChannelData(0);
+  for(let i = 0; i < bufLen; i++){
+    ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufLen, 2.0);
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'lowpass';
+  hp.frequency.value = 220;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.10, startAt);
+  g.gain.exponentialRampToValueAtTime(0.0001, startAt + dur);
+  src.connect(hp).connect(g).connect(busGain);
+  src.start(startAt);
+  src.stop(startAt + dur + 0.05);
+  _bgmState.nodes.push({ src: src, gain: g });
+}
+function _scheduleBGMLoop(name){
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  const track = BGM_TRACKS[name];
+  if(!track) return;
+  const beat = 60 / track.bpm;
+  const loopDur = track.bars * track.beatsPerBar * beat;
+  const t0 = Math.max(ctx.currentTime + 0.05, _bgmState.stopAt || 0);
+  // 旋律
+  let cursor = t0;
+  for(const [f, b] of track.melody){
+    _scheduleBGMNote(ctx, f, cursor, b * beat * 0.95, track.melodyWave, track.melodyVol, _bgmGain);
+    cursor += b * beat;
+  }
+  // bass
+  cursor = t0;
+  for(const [f, b] of track.bass){
+    _scheduleBGMNote(ctx, f, cursor, b * beat * 0.95, track.bassWave, track.bassVol, _bgmGain);
+    cursor += b * beat;
+  }
+  // drum：每拍一击
+  if(track.drum){
+    for(let i = 0; i < track.bars * track.beatsPerBar; i++){
+      _scheduleBGMDrum(ctx, t0 + i * beat, 0.18, _bgmGain);
+    }
+  }
+  _bgmState.stopAt = t0 + loopDur;
+  // 提前 150ms 排下一段
+  const msUntilNextSchedule = Math.max(50, (loopDur - 0.15) * 1000);
+  _bgmState.loopTimer = setTimeout(() => {
+    // 清理过期 nodes（防累积）
+    if(_bgmState.nodes.length > 200) _bgmState.nodes.splice(0, _bgmState.nodes.length - 200);
+    if(_bgmState.name === name) _scheduleBGMLoop(name);
+  }, msUntilNextSchedule);
+}
+function playBGM(name){
+  if(_bgmState.name === name) return;
+  stopBGM();
+  if(!name) return;
+  if(!BGM_TRACKS[name]) return;
+  // AudioContext 必须在用户手势之后才会启动
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  if(ctx.state === 'suspended'){
+    // 推迟到 resume 后开始（resumeAudioOnGesture 会再调一次）
+    _bgmState.name = name;
+    _bgmState.stopAt = 0;
+    return;
+  }
+  _bgmState.name = name;
+  _bgmState.stopAt = 0;
+  _scheduleBGMLoop(name);
+}
+window.playBGM = playBGM;
+window.stopBGM = stopBGM;
+
+// 用户手势后激活 AudioContext + 重启暂停的 BGM
+function resumeAudioOnGesture(){
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  if(ctx.state === 'suspended'){
+    ctx.resume().then(() => {
+      if(_bgmState.name && !_bgmState.loopTimer){
+        _scheduleBGMLoop(_bgmState.name);
+      }
+    }).catch(() => {});
+  }
+}
+window.addEventListener('pointerdown', resumeAudioOnGesture, { passive: true });
+window.addEventListener('keydown', resumeAudioOnGesture, { passive: true });
+
+// ============================================================
+//  全局点击音效代理（保底）
+//  规则：
+//    1) 任何 cursor=pointer / button / [onclick] / [data-clk] 元素的 pointerdown，
+//       若该次操作未在 200ms 内发出"专门音效"，则补一个 click_ok / click_deny
+//    2) 元素带 .disabled / .off / [aria-disabled=true] / data-deny → click_deny
+//    3) 静音按钮 / sfx() 调用过的元素自然覆盖（_sfxThrottle 命中即不补）
+// ============================================================
+let _lastSfxAt = 0;
+const _origSfx = sfx;
+window.sfx = function(name){
+  _lastSfxAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  return _origSfx(name);
+};
+function _isDenyEl(el){
+  if(!el) return false;
+  if(el.classList && (el.classList.contains('off') || el.classList.contains('disabled') || el.classList.contains('locked'))) return true;
+  if(el.getAttribute && el.getAttribute('aria-disabled') === 'true') return true;
+  if(el.dataset && el.dataset.deny === '1') return true;
+  return false;
+}
+function _isClickableEl(el){
+  if(!el) return false;
+  if(el.tagName === 'BUTTON') return true;
+  if(el.hasAttribute && el.hasAttribute('onclick')) return true;
+  if(el.dataset && el.dataset.clk === '1') return true;
+  // cursor:pointer 也算
+  try {
+    const cs = window.getComputedStyle(el);
+    if(cs && cs.cursor === 'pointer') return true;
+  } catch(e){}
+  return false;
+}
+function _findClickableAncestor(el){
+  for(let n = el, i = 0; n && i < 5; n = n.parentElement, i++){
+    if(_isClickableEl(n)) return n;
+  }
+  return null;
+}
+window.addEventListener('pointerdown', (e) => {
+  if(e.button !== 0 && e.pointerType === 'mouse') return;
+  const el = _findClickableAncestor(e.target);
+  if(!el) return;
+  const before = _lastSfxAt;
+  // 等一帧：如果元素 onclick 内部已经放过音效（sfx()调用），就不补
+  setTimeout(() => {
+    if(_lastSfxAt > before) return; // 元素自己出过音
+    if(_isDenyEl(el)){
+      _origSfx('click_deny');
+      _lastSfxAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    } else {
+      _origSfx('click_ok');
+      _lastSfxAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    }
+  }, 0);
+}, { passive: true, capture: true });
 
 // ============================================================
 //  HERO SELECTION UI
@@ -7311,11 +8251,12 @@ function openStartScreen(){
   const ov = document.getElementById('start-overlay');
   ov.style.display = 'flex';
   document.getElementById('hero-select-overlay').style.display = 'none';
+  if(typeof playBGM === 'function') playBGM('menu');
   // 重置头部文本（结算界面会覆写这些字段）
   const h1 = ov.querySelector('h1');
   const sub = ov.querySelector('.sub');
   if(h1){
-    h1.textContent = '堡垒防卫者';
+    h1.textContent = '代号D';
     h1.style.color = '';
     h1.style.textShadow = '';
   }
@@ -7980,6 +8921,7 @@ function confirmSelection(){
 // ============================================================
 function startGame(){
   syncSelectedClassesFromHeroes();
+  if(typeof playBGM === 'function') playBGM('battle');
   const selectedHeroes = (G && G.selectedHeroes && G.selectedHeroes.length === 4)
     ? G.selectedHeroes.slice() : ['huangyueying','zhangfei','huangzhong','caiwenji'];
   const selectedClasses = selectedHeroes.map(id => HERO_DEFS[id].cls);
@@ -8159,7 +9101,10 @@ function doSummon(){
     const idx = G.unlockedSlots - 6;
     let thresh = 3;
     for(let i = 0; i <= idx; i++) thresh += SLOT_UNLOCK_STEPS[i];
-    if(G.summonN >= thresh) G.unlockedSlots++;
+    if(G.summonN >= thresh){
+      G.unlockedSlots++;
+      sfx('slot_unlock');
+    }
   }
 
   const pool = summonPool();
@@ -8701,6 +9646,7 @@ function updateLootChests(){
 // 拾取宝箱：触发宝箱奖励UI
 function pickupLootChest(ch){
   ch.pickedUp = true;
+  sfx('chest_open');
   // 1-3张概率：30/60/10
   const r = Math.random();
   const nCards = r < 0.3 ? 1 : (r < 0.9 ? 2 : 3);
@@ -8939,9 +9885,10 @@ function showCeremonyBanner(mode, title, sub, duration){
     el.className = '';
     void el.offsetWidth;
     el.classList.add('show', mode);
-    if(mode === 'battle') triggerScreenFlash(0.3, '255, 215, 128', 0.4);
-    else if(mode === 'victory') triggerScreenFlash(0.4, '120, 255, 200', 0.5);
-    else if(mode === 'defeat') triggerScreenFlash(0.5, '180, 40, 40', 0.6);
+    if(mode === 'battle'){ triggerScreenFlash(0.3, '255, 215, 128', 0.4); sfx('banner_battle'); }
+    else if(mode === 'victory'){ triggerScreenFlash(0.4, '120, 255, 200', 0.5); sfx('banner_victory'); }
+    else if(mode === 'defeat'){ triggerScreenFlash(0.5, '180, 40, 40', 0.6); sfx('banner_defeat'); }
+    else if(mode === 'boss'){ sfx('banner_boss'); }
     // boss 模式：屏闪由调用方触发，这里不重复
     clearTimeout(el._cbHideT);
     el._cbHideT = setTimeout(() => {
@@ -9133,7 +10080,7 @@ function handleSlotClick(idx){
       spawnParticleBurst(merged.worldX, merged.worldY, '#fff8c0', 28);
       triggerScreenFlash(0.5, '255, 215, 80', 0.6);
       triggerShake(8, 0.4);
-      sfx('maxlv');
+      sfx('true_hero');
       spawnSkillPopup(merged.worldX, merged.worldY - 22, '真·' + heroNameForCls(newCls), '#ffd700');
     } else if(newLv >= 4){
       // L4 进阶
@@ -9204,6 +10151,23 @@ const DRAG = {
 function dragGetSlotIdxFromPoint(x, y){
   const grid = document.getElementById('hero-grid');
   if(!grid) return -1;
+  // 优先用 elementFromPoint + closest — 命中检测更可靠，能绕开 ghost / 渲染竞态
+  // 临时隐藏 ghost，避免它即便 pointer-events:none 在 iOS 上偶尔仍参与命中
+  const ghost = DRAG.ghost;
+  const ghostVis = ghost ? ghost.style.display : null;
+  if(ghost) ghost.style.display = 'none';
+  let el = document.elementFromPoint(x, y);
+  if(ghost) ghost.style.display = ghostVis || '';
+  if(el){
+    const slot = el.closest && el.closest('.hslot');
+    if(slot && slot.parentElement === grid){
+      const slots = grid.querySelectorAll('.hslot');
+      for(let i = 0; i < slots.length; i++){
+        if(slots[i] === slot) return i;
+      }
+    }
+  }
+  // 兜底：遍历 rect（覆盖 elementFromPoint 失败的边缘情况，如某些 iOS 旧版本）
   const slots = grid.querySelectorAll('.hslot');
   for(let i = 0; i < slots.length; i++){
     const r = slots[i].getBoundingClientRect();
@@ -9282,6 +10246,11 @@ function dragEndCleanup(){
   if(DRAG.longPressTimer){ clearTimeout(DRAG.longPressTimer); DRAG.longPressTimer = null; }
   DRAG.longTriggered = false;
   if(DRAG.ghost){ DRAG.ghost.remove(); DRAG.ghost = null; }
+  // 释放指针捕获 — 避免泄漏，否则后续触摸会被定向到旧 element
+  if(DRAG.captureEl && DRAG.pointerId !== -1){
+    try { DRAG.captureEl.releasePointerCapture && DRAG.captureEl.releasePointerCapture(DRAG.pointerId); } catch(_) {}
+  }
+  DRAG.captureEl = null;
   const grid = document.getElementById('hero-grid');
   if(grid){
     grid.querySelectorAll('.hslot').forEach(el => {
@@ -9324,6 +10293,9 @@ function bindSlotDrag(el, idx){
     DRAG.startX = e.clientX;
     DRAG.startY = e.clientY;
     DRAG.pointerId = e.pointerId;
+    DRAG.captureEl = el;
+    // 锁定指针到本格 — iOS Safari 在拖动跨元素时偶尔丢 pointerup，capture 后强制后续事件回到此 element
+    try { el.setPointerCapture && el.setPointerCapture(e.pointerId); } catch(_) {}
     // 长按 → 打开详情（450ms）
     DRAG.longPressTimer = setTimeout(() => {
       // 必须未进入拖动状态才视为长按
@@ -9404,6 +10376,38 @@ window.addEventListener('pointerup', (e) => {
 window.addEventListener('pointercancel', () => {
   if(DRAG.active || DRAG.pending) dragEndCleanup();
 });
+
+// iOS 兜底：某些情况下（如手指触到状态栏顶端、Safari 切换前后台）pointerup/cancel 不触发，
+// 用 touchend / touchcancel 双保险清理 — 否则 DRAG 状态卡住后续手指拖动会直接 return
+window.addEventListener('touchend', (e) => {
+  if(!DRAG.pending && !DRAG.active) return;
+  // 让浏览器先派发 pointerup（多数 iOS 会，少数不会）；若 100ms 后还卡着就强制清
+  setTimeout(() => {
+    if(DRAG.pending || DRAG.active){
+      // 用最后一个触点尝试结算
+      const t = (e.changedTouches && e.changedTouches[0]) || null;
+      if(t && DRAG.active){
+        const overDiscard = dragIsOverDiscard(t.clientX, t.clientY);
+        const src = DRAG.srcIdx;
+        if(overDiscard){
+          dragEndCleanup();
+          openDiscardConfirm(src);
+          return;
+        }
+        const dst = dragGetSlotIdxFromPoint(t.clientX, t.clientY);
+        dragEndCleanup();
+        if(dst >= 0 && dst < (G.unlockedSlots || 6)){
+          tryMergeByDrag(src, dst);
+        }
+      } else {
+        dragEndCleanup();
+      }
+    }
+  }, 100);
+}, { passive: true });
+window.addEventListener('touchcancel', () => {
+  if(DRAG.active || DRAG.pending) dragEndCleanup();
+}, { passive: true });
 
 // ============================================================
 //  HUD
@@ -9836,6 +10840,7 @@ function endGame(){
   if(infiniteChallenge) saveInfiniteBestWave(survivedWave);
   const isPerfect = won && G.fortress.hp >= G.fortress.maxHp;
   sfx((won || infiniteChallenge) ? 'win' : 'lose');
+  if(typeof stopBGM === 'function') stopBGM();
 
   // 复用 dps-panel 作结算面板（与暂停同款全屏）
   const panel = document.getElementById('dps-panel');
@@ -10016,6 +11021,12 @@ renderHeroGrid();
 })();
 // 首屏：渲染关卡选择网格
 openStartScreen();
+
+// 同步静音按钮显示
+(function syncMuteBtn(){
+  const el = document.getElementById('mute-btn');
+  if(el) el.textContent = AUDIO_PREFS.mute ? '🔇' : '🔊';
+})();
 
 // Canvas点击：拾取宝箱（仅在游戏运行且未暂停时响应）
 canvas.addEventListener('click', (e) => {
